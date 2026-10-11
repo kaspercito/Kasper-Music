@@ -1,0 +1,47 @@
+# Dockerfile para Heroku (stack "container"): bot con modo local (FFmpeg + yt-dlp).
+
+# ---- Build ----
+FROM oven/bun:1 AS builder
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun run build
+
+# ---- Runtime ----
+FROM oven/bun:1
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/locales ./locales
+COPY --from=builder /app/package.prod.json ./package.json
+COPY --from=builder /app/drizzle ./drizzle
+COPY --from=builder /app/drizzle.config.ts /app/drizzle.config.sqlite.ts ./
+COPY --from=builder /app/src/env.ts ./src/env.ts
+COPY --from=builder /app/src/database/schemas.ts /app/src/database/schemas.sqlite.ts ./src/database/
+
+RUN bun install --production \
+  && PGLITE_PKG="node_modules/@electric-sql/pglite/dist" \
+  && rm -f "$PGLITE_PKG/pglite.wasm" "$PGLITE_PKG/pglite.data" \
+  && ln -s /app/dist/pglite.wasm "$PGLITE_PKG/pglite.wasm" \
+  && ln -s /app/dist/pglite.data "$PGLITE_PKG/pglite.data"
+
+# yt-dlp (binario independiente, no necesita Python)
+RUN mkdir -p /app/bin \
+  && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /app/bin/yt-dlp \
+  && chmod +x /app/bin/yt-dlp
+
+COPY bin/heroku-start.sh /app/bin/heroku-start.sh
+
+ENV YTDLP_PATH=/app/bin/yt-dlp \
+    PLAYER_BACKEND=local \
+    HOME=/tmp
+
+# Heroku ejecuta el contenedor con un usuario sin privilegios: /app debe ser escribible (SQLite).
+RUN chmod -R a+rwX /app
+
+CMD ["sh", "/app/bin/heroku-start.sh"]
