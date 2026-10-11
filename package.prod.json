@@ -15,6 +15,9 @@
     "db:studio:sqlite": "drizzle-kit studio --config=drizzle.config.sqlite.ts"
   },
   "dependencies": {
+    "@snazzah/davey": "^0.1.12",
+    "libsodium-wrappers": "^0.8.4",
+    "opusscript": "^0.1.1",
     "@libsql/client": "0.17.0",
     "@electric-sql/pglite": "^0.3.14",
     "drizzle-orm": "^0.45.1",

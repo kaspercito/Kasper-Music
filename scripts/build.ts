@@ -46,7 +46,7 @@ const buildConfig: BuildConfig = {
 	minify: true,
 	target: "bun",
 	sourcemap: false,
-	external: ["./locales/*"],
+	external: ["./locales/*", "opusscript", "libsodium-wrappers", "@snazzah/davey"],
 	splitting: true,
 	naming: { chunk: "chunks/[hash].[ext]" },
 	plugins: [stubOptionalDeps],

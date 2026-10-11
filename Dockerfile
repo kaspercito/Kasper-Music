@@ -23,7 +23,7 @@ COPY --from=builder --chown=bun:bun /app/drizzle.config.ts /app/drizzle.config.s
 COPY --from=builder --chown=bun:bun /app/src/env.ts ./src/env.ts
 COPY --from=builder --chown=bun:bun /app/src/database/schemas.ts /app/src/database/schemas.sqlite.ts ./src/database/
 
-RUN apk add --no-cache su-exec &&\
+RUN apk add --no-cache su-exec ffmpeg yt-dlp &&\
   bun install --production --frozen-lockfile &&\
   # pglite.wasm & pglite.data symlink from /app/dist
   PGLITE_PKG="node_modules/@electric-sql/pglite/dist" &&\

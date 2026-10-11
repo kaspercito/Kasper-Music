@@ -21,6 +21,7 @@ import { LavamusicEventType } from "../types/events";
 import * as Utils from "../utils/Utils";
 import { initI18n, resolveLocalizations, t } from "./I18n";
 import type { Component, Command } from "./index";
+import { LocalManager } from "../local/LocalManager";
 import LavalinkClient from "./LavalinkClient";
 import logger from "./Logger";
 
@@ -65,7 +66,14 @@ export default class Lavamusic extends Client {
 			logger.warn("Top.gg token not found! Skipping Top.gg API initialization");
 		}
 
-		this.manager = new LavalinkClient(this);
+		const useLavalink =
+			env.PLAYER_BACKEND === "lavalink" || (env.PLAYER_BACKEND === "auto" && env.NODES.length > 0);
+		if (useLavalink) {
+			this.manager = new LavalinkClient(this);
+		} else {
+			// Mismo contrato que LavalinkClient (duck typing), pero reproduciendo localmente.
+			this.manager = new LocalManager(this as any) as unknown as LavalinkClient;
+		}
 
 		try {
 			this.loadCommands();

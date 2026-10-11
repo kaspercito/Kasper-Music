@@ -60,8 +60,10 @@
     "vitepress-plugin-mermaid": "^2.0.17"
   },
   "dependencies": {
+    "@discordjs/voice": "^0.19.2",
     "@electric-sql/pglite": "^0.3.15",
     "@libsql/client": "^0.17.4",
+    "@snazzah/davey": "^0.1.12",
     "@top-gg/sdk": "^3.1.6",
     "better-sqlite3": "^12.11.1",
     "discord.js": "^14.25.1",
@@ -69,7 +71,9 @@
     "genius-lyrics-api": "^3.2.1",
     "i18next": "^25.8.13",
     "lavalink-client": "^2.9.7",
+    "libsodium-wrappers": "^0.8.4",
     "node-system-stats": "^2.0.5",
+    "opusscript": "^0.1.1",
     "pg": "^8.19.0",
     "signale": "^1.4.0",
     "topgg-autoposter": "^2.0.2",

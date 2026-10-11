@@ -542,3 +542,6 @@ package-lock.json
 
 .direnv/
 docs/.vitepress/cache
+
+# yt-dlp descargado en Heroku
+bin/yt-dlp

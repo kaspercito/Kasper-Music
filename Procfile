@@ -1,1 +1,1 @@
-worker: bun run start
+worker: sh bin/start.sh

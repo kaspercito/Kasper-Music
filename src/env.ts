@@ -70,10 +70,13 @@ const envSchema = z.object({
 			])
 			.default("youtube"),
 	),
+	// Opcional: sin nodos (o con PLAYER_BACKEND=local) el bot reproduce solo, sin Lavalink.
 	NODES: z.preprocess(
-		(val) => (typeof val === "string" ? JSON.parse(val) : val),
-		z.array(LavalinkNodeSchema),
+		(val) => (typeof val === "string" ? (val.trim() ? JSON.parse(val) : []) : val),
+		z.array(LavalinkNodeSchema).default([]),
 	),
+	// auto = Lavalink si hay NODES, si no local | local = siempre local | lavalink = siempre Lavalink
+	PLAYER_BACKEND: z.enum(["auto", "local", "lavalink"]).default("auto"),
 	GENIUS_API: z.string().optional(),
 });
 
