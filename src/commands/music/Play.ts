@@ -6,6 +6,7 @@ import type {
 import type { SearchResult } from "lavalink-client";
 import { I18N, t } from "../../structures/I18n";
 import { Command, type Context, type Lavamusic } from "../../structures/index";
+import { etaToEndOfQueue, fail, playlistAddedEmbed, trackAddedEmbed, tx } from "../../utils/Embeds";
 import { applyFairPlayToQueue } from "../../utils/functions/player";
 import {
 	Connect,
@@ -61,6 +62,7 @@ export default class Play extends Command {
 
 	public async run(client: Lavamusic, ctx: Context, args: string[]): Promise<any> {
 		const query = args.join(" ");
+		const locale = await client.db.getLanguage(ctx.guild.id);
 		await ctx.sendDeferMessage(ctx.locale(I18N.commands.play.loading));
 		let player = client.manager.getPlayer(ctx.guild.id);
 		const memberVoiceChannel = (ctx.member as any).voice.channel as VoiceChannel;
@@ -78,18 +80,17 @@ export default class Play extends Command {
 		if (!player.connected) await player.connect();
 
 		const response = (await player.search({ query: query }, ctx.author)) as SearchResult;
-		const embed = this.client.embed();
-
 		if (!response || response.tracks?.length === 0) {
 			return await ctx.editMessage({
 				content: "",
-				embeds: [
-					embed
-						.setColor(this.client.color.red)
-						.setDescription(ctx.locale(I18N.commands.play.errors.search_error)),
-				],
+				embeds: [fail(tx(locale).noResults)],
 			});
 		}
+
+		// Datos para la tarjeta, calculados ANTES de añadir a la cola
+		const wasIdle = !player.playing && !player.queue.current && player.queue.tracks.length === 0;
+		const etaMs = etaToEndOfQueue(player);
+		const positionInQueue = player.queue.tracks.length + 1;
 
 		await player.queue.add(response.loadType === "playlist" ? response.tracks : response.tracks[0]);
 
@@ -102,23 +103,23 @@ export default class Play extends Command {
 			await ctx.editMessage({
 				content: "",
 				embeds: [
-					embed.setColor(this.client.color.main).setDescription(
-						ctx.locale(I18N.commands.play.added_playlist_to_queue, {
-							length: response.tracks.length,
-						}),
-					),
+					playlistAddedEmbed(response.tracks, {
+						locale,
+						name: response.playlist?.name,
+						url: (response.playlist as any)?.uri ?? null,
+					}),
 				],
 			});
 		} else {
 			await ctx.editMessage({
 				content: "",
 				embeds: [
-					embed.setColor(this.client.color.main).setDescription(
-						ctx.locale(I18N.commands.play.added_to_queue, {
-							title: response.tracks[0].info.title,
-							uri: response.tracks[0].info.uri,
-						}),
-					),
+					trackAddedEmbed(response.tracks[0], {
+						locale,
+						position: positionInQueue,
+						etaMs,
+						playingNow: wasIdle,
+					}),
 				],
 			});
 		}

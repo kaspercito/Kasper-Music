@@ -2,6 +2,12 @@ import { I18N } from "../../structures/I18n";
 import { Command, type Context, type Lavamusic } from "../../structures/index";
 import { EmbedLinks, ReadMessageHistory, SendMessages, ViewChannel } from "../../utils/Permissions";
 
+function quality(ms: number): { dot: string; color: number } {
+	if (ms < 150) return { dot: "🟢", color: 0x22c55e };
+	if (ms < 400) return { dot: "🟡", color: 0xf59e0b };
+	return { dot: "🔴", color: 0xef4444 };
+}
+
 export default class Ping extends Command {
 	constructor(client: Lavamusic) {
 		super(client, {
@@ -48,16 +54,16 @@ export default class Ping extends Command {
 				name: "Pong!",
 				iconURL: client.user?.displayAvatarURL(),
 			})
-			.setColor(this.client.color.main)
+			.setColor(quality(apiLatency).color)
 			.addFields([
 				{
-					name: ctx.locale(I18N.commands.ping.bot_latency),
-					value: `\`\`\`diff\n+ ${botLatency}ms\n\`\`\``, // Always positive latency
+					name: `🤖 ${ctx.locale(I18N.commands.ping.bot_latency)}`,
+					value: `${quality(botLatency).dot} **${botLatency}ms**`,
 					inline: true,
 				},
 				{
-					name: ctx.locale(I18N.commands.ping.api_latency),
-					value: `\`\`\`diff\n+ ${apiLatency}ms\n\`\`\``, // Always positive latency
+					name: `🌐 ${ctx.locale(I18N.commands.ping.api_latency)}`,
+					value: `${quality(apiLatency).dot} **${apiLatency}ms**`,
 					inline: true,
 				},
 			])

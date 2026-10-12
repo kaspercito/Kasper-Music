@@ -4,7 +4,14 @@ export default {
 		green: 0x00ff00,
 		blue: 0x0000ff,
 		yellow: 0xffff00,
-		main: 0x2f3136,
+		// Paleta Kasper: violeta de marca + colores de estado
+		main: 0x8b5cf6,
+		brand: 0x8b5cf6,
+		success: 0x22c55e,
+		error: 0xef4444,
+		warn: 0xf59e0b,
+		info: 0x38bdf8,
+		paused: 0xf59e0b,
 	},
 	// You can add custom emoji with ID format (e.g., <:emojiName:123456789012345678>)
 	emoji: {

@@ -1,7 +1,6 @@
 import {
 	type AnySelectMenuInteraction,
 	type ButtonInteraction,
-	EmbedBuilder,
 	GuildMember,
 	MessageFlags,
 	type ModalSubmitInteraction,
@@ -10,6 +9,7 @@ import type { Player } from "lavalink-client";
 import { I18N, t } from "../structures/I18n";
 import type { Lavamusic } from "../structures/index";
 import { checkDj, createButtonRow } from "../events/player/TrackStart";
+import { nowPlayingEmbed } from "./Embeds";
 import { updateSetup } from "./SetupSystem";
 
 export async function handlePlayerInteraction(
@@ -65,22 +65,11 @@ export async function updatePlayerMessage(
 
 	// Otherwise, edit the current message (normal player)
 	const track = player.queue.current!;
-	const embed = new EmbedBuilder()
-		.setAuthor({
-			name: t(I18N.player.trackStart.now_playing, { lng: locale }),
-			iconURL: client.config.icons[track.info.sourceName] || client.user?.displayAvatarURL(),
-		})
-		.setDescription(
-			`**[${track.info.title}](${track.info.uri})**\n` +
-				`-# ${text}\n` +
-				`${t(I18N.player.trackStart.author)}: ${track.info.author}\n` +
-				`${t(I18N.player.trackStart.duration)}: ${track.info.isStream ? "LIVE" : client.utils.formatTime(track.info.duration)}`,
-		)
-		.setColor(client.color.main);
-
-	if (track.info.artworkUrl) {
-		embed.setThumbnail(track.info.artworkUrl);
-	}
+	const embed = nowPlayingEmbed(player, track, {
+		locale,
+		status: text,
+		botAvatar: client.user?.displayAvatarURL(),
+	});
 
 	await interaction.message.edit({
 		embeds: [embed],

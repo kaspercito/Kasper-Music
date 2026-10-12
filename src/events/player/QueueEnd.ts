@@ -2,6 +2,7 @@ import type { TextChannel } from "discord.js";
 import type { Player, Track, TrackStartEvent } from "lavalink-client";
 import { Event, type Lavamusic } from "../../structures/index";
 import { LavamusicEventType } from "../../types/events";
+import { queueEndEmbed } from "../../utils/Embeds";
 import { updateSetup } from "../../utils/SetupSystem";
 
 export default class QueueEnd extends Event {
@@ -20,6 +21,13 @@ export default class QueueEnd extends Event {
 
 		if (player.voiceChannelId) {
 			await this.client.utils.setVoiceStatus(this.client, player.voiceChannelId, "");
+		}
+
+		// Aviso visual de fin de cola (solo si no hay canal de setup dedicado)
+		const setup = await this.client.db.getSetup(guild.id).catch(() => null);
+		if (!setup?.textId && player.textChannelId) {
+			const notify = guild.channels.cache.get(player.textChannelId) as TextChannel | undefined;
+			await notify?.send({ embeds: [queueEndEmbed(locale)] }).catch(() => null);
 		}
 
 		const messageId = player.get<string | undefined>("messageId");

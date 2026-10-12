@@ -41,6 +41,7 @@ RUN printf '%s\n' \
   '#!/bin/sh' \
   'set -e' \
   'cd /app' \
+  'if [ -n "$YTDLP_COOKIES_B64" ]; then echo "$YTDLP_COOKIES_B64" | base64 -d > /tmp/cookies.txt && export YTDLP_COOKIES=/tmp/cookies.txt && echo "[start] Cookies de yt-dlp cargadas desde YTDLP_COOKIES_B64"; fi' \
   'timeout 40 /app/bin/yt-dlp -U >/dev/null 2>&1 || echo "[start] No se pudo actualizar yt-dlp (se usa la version del build)"' \
   'if echo "$DATABASE_URL" | grep -qE "^sqlite:|file:.*\.db$|file:.*\.sqlite$|\.db$|\.sqlite$"; then' \
   '  echo "[start] SQLite detectado, sincronizando esquema..."' \

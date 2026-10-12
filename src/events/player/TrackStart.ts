@@ -4,7 +4,6 @@ import {
 	type ButtonInteraction,
 	ButtonStyle,
 	type ChannelSelectMenuInteraction,
-	EmbedBuilder,
 	type MentionableSelectMenuInteraction,
 	PermissionFlagsBits,
 	type RoleSelectMenuInteraction,
@@ -17,6 +16,7 @@ import { I18N, t } from "../../structures/I18n";
 import { Event, type Lavamusic } from "../../structures/index";
 import type { Requester } from "../../types";
 import { LavamusicEventType } from "../../types/events";
+import { nowPlayingEmbed } from "../../utils/Embeds";
 import { trackStart } from "../../utils/SetupSystem";
 
 export default class TrackStart extends Event {
@@ -45,23 +45,10 @@ export default class TrackStart extends Event {
 			);
 		}
 
-		const embed = new EmbedBuilder()
-			.setAuthor({
-				name: t(I18N.player.trackStart.now_playing, { lng: locale }),
-				iconURL:
-					this.client.config.icons[track.info.sourceName] || this.client.user?.displayAvatarURL(),
-			})
-			.setDescription(
-				`**[${track.info.title}](${track.info.uri})**\n` +
-					`-# ${t(I18N.player.trackStart.author)}: ${track.info.author}\n` +
-					`-# ${t(I18N.player.trackStart.duration)}: ${track.info.isStream ? "LIVE" : this.client.utils.formatTime(track.info.duration)}\n` +
-					`-# ${t(I18N.player.trackStart.requested_by, { user: (track.requester as Requester).username })}`,
-			)
-			.setColor(this.client.color.main);
-
-		if (track.info.artworkUrl) {
-			embed.setThumbnail(track.info.artworkUrl);
-		}
+		const embed = nowPlayingEmbed(player, track, {
+			locale,
+			botAvatar: this.client.user?.displayAvatarURL(),
+		});
 
 		const setup = await this.client.db.getSetup(guild.id);
 
