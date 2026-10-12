@@ -39,6 +39,7 @@ COPY bin/heroku-start.sh /app/bin/heroku-start.sh
 
 ENV YTDLP_PATH=/app/bin/yt-dlp \
     PLAYER_BACKEND=local \
+    YTDLP_ARGS="--js-runtimes bun" \
     HOME=/tmp
 
 # Heroku ejecuta el contenedor con un usuario sin privilegios: /app debe ser escribible (SQLite).

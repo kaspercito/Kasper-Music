@@ -40,3 +40,8 @@ Para volver a Lavalink: `PLAYER_BACKEND=lavalink` y tus `NODES`.
 2. Config Vars: `PLAYER_BACKEND=local`.
 3. El `Procfile` usa `bin/start.sh`, que descarga yt-dlp en cada arranque.
 4. Si YouTube bloquea la IP: `YTDLP_COOKIES` con un cookies.txt de una cuenta secundaria.
+
+### Heroku con stack "container" (Docker)
+Si Heroku dice "Your app does not include a heroku.yml build manifest", usa `heroku.yml` + `Dockerfile.heroku` + `bin/heroku-start.sh`.
+En ese modo NO se usan buildpacks (ni apt) ni el Procfile: FFmpeg y yt-dlp ya van dentro de la imagen.
+Después del primer deploy, en Resources activa el dyno `worker`.

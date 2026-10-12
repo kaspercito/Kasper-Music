@@ -50,7 +50,14 @@ export async function createDatabaseProvider(): Promise<IDatabaseProvider> {
 			const { drizzle } = await import("drizzle-orm/node-postgres");
 			const { Pool } = await import("pg");
 
-			const pool = new Pool({ connectionString: env.DATABASE_URL });
+			// Heroku Postgres (y la mayoría de Postgres en la nube) exige SSL con certificado autofirmado.
+			const dbUrl = env.DATABASE_URL as string;
+			const isLocalDb = /@(localhost|127\.0\.0\.1|postgres|db)(:|\/)/.test(dbUrl);
+			const hasSslParam = /[?&](ssl|sslmode)=/.test(dbUrl);
+			const pool = new Pool({
+				connectionString: dbUrl,
+				...(isLocalDb || hasSslParam ? {} : { ssl: { rejectUnauthorized: false } }),
+			});
 			const db = drizzle(pool, { schema: pgSchema });
 
 			logger.success("[DB] Connected to PostgreSQL");
