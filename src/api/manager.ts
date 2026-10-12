@@ -131,6 +131,17 @@ export function startPanelServer(manager: ShardingManager): void {
 		.update(`${process.env.PANEL_SECRET || ""}|${password}|${process.env.TOKEN || ""}`)
 		.digest();
 	const pwHash = createHash("sha256").update(password).digest();
+	// Acceso de invitado: contraseña aparte, servidores limitados y permisos acotados.
+	const guestPassword = process.env.PANEL_GUEST_PASSWORD?.trim() ?? "";
+	const guestHash = guestPassword && guestPassword !== password ? createHash("sha256").update(guestPassword).digest() : null;
+	const guestGuilds = (process.env.PANEL_GUEST_GUILDS ?? "").split(",").map((g) => g.trim()).filter(Boolean);
+	const guestPerms = (process.env.PANEL_GUEST_PERMS ?? "play,control,queue,filters,voice").split(",").map((g) => g.trim().toLowerCase()).filter((g) => ["play", "control", "queue", "filters", "voice"].includes(g));
+	// Modo abierto: cualquiera con el enlace entra como invitado SIN contraseña (exige limitar los servidores).
+	const guestOpen = process.env.PANEL_GUEST_OPEN === "true" && guestGuilds.length > 0;
+	if (process.env.PANEL_GUEST_OPEN === "true" && !guestGuilds.length) {
+		logger.warn("[PANEL] PANEL_GUEST_OPEN ignorado: define PANEL_GUEST_GUILDS con los servidores que pueden verse.");
+	}
+	const guestEnabled = !!guestHash || guestOpen;
 	const origins = (process.env.PANEL_ORIGIN ?? "")
 		.split(",")
 		.map((o) => o.trim().replace(/\/+$/, ""))
@@ -144,23 +155,34 @@ export function startPanelServer(manager: ShardingManager): void {
 
 	/* ---- auth ---- */
 	const sign = (payload: string) => createHmac("sha256", secret).update(payload).digest("base64url");
-	const makeToken = () => {
-		const payload = Buffer.from(JSON.stringify({ exp: Date.now() + TOKEN_TTL_MS, n: randomUUID() })).toString("base64url");
+	const makeToken = (role: "admin" | "guest") => {
+		const payload = Buffer.from(JSON.stringify({ exp: Date.now() + TOKEN_TTL_MS, n: randomUUID(), r: role })).toString("base64url");
 		return `${payload}.${sign(payload)}`;
 	};
-	const verifyToken = (token: string): boolean => {
+	/** Devuelve el rol de la sesión, o null si el token no es válido. */
+	const verifyToken = (token: string): "admin" | "guest" | null => {
 		const [payload, mac] = token.split(".");
-		if (!payload || !mac) return false;
-		const expected = sign(payload);
+		if (!payload || !mac) return null;
 		const a = Buffer.from(mac);
-		const b = Buffer.from(expected);
-		if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
+		const b = Buffer.from(sign(payload));
+		if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
 		try {
-			return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")).exp > Date.now();
+			const d = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+			if (!(d.exp > Date.now())) return null;
+			if (d.r === "guest" && !guestEnabled) return null; // el acceso de invitado se desactivó
+			return d.r === "guest" ? "guest" : "admin";
 		} catch {
-			return false;
+			return null;
 		}
 	};
+	const permsFor = (role: "admin" | "guest") => (role === "admin" ? ["play", "control", "queue", "filters", "voice", "admin"] : guestPerms);
+
+	// Límite de acciones del invitado (anti-spam): 40 por minuto por IP.
+	const guestHits = new Map<string, { n: number; reset: number }>();
+	setInterval(() => {
+		const now = Date.now();
+		for (const [k, v] of guestHits) if (v.reset < now) guestHits.delete(k);
+	}, 60_000).unref();
 
 	const attempts = new Map<string, { n: number; reset: number }>();
 	setInterval(() => {
@@ -236,7 +258,7 @@ export function startPanelServer(manager: ShardingManager): void {
 		const path = url.pathname.replace(/^\/api/, "").replace(/\/+$/, "") || "/";
 		const method = req.method ?? "GET";
 
-		if (method === "GET" && path === "/health") return send(req, res, 200, { ok: true, panel: true, configured: !!password });
+		if (method === "GET" && path === "/health") return send(req, res, 200, { ok: true, panel: true, configured: !!password, guestOpen });
 
 		if (!password) throw new HttpError(503, "Panel desactivado: define la variable PANEL_PASSWORD en Heroku.");
 
@@ -249,8 +271,12 @@ export function startPanelServer(manager: ShardingManager): void {
 				throw new HttpError(429, "Demasiados intentos. Espera unos minutos.");
 			}
 			const body = await readJson(req);
+			if (body.guest === true && guestOpen) {
+				return send(req, res, 200, { token: makeToken("guest"), expiresIn: TOKEN_TTL_MS, role: "guest", perms: permsFor("guest") });
+			}
 			const given = createHash("sha256").update(String(body.password ?? "")).digest();
-			if (!timingSafeEqual(given, pwHash)) {
+			const role: "admin" | "guest" | null = timingSafeEqual(given, pwHash) ? "admin" : guestHash && timingSafeEqual(given, guestHash) ? "guest" : null;
+			if (!role) {
 				const cur = a && a.reset > now ? a : { n: 0, reset: now + LOGIN_WINDOW_MS };
 				cur.n++;
 				attempts.set(ip, cur);
@@ -259,15 +285,40 @@ export function startPanelServer(manager: ShardingManager): void {
 				throw new HttpError(401, "Contraseña incorrecta.");
 			}
 			attempts.delete(ip);
-			logger.info(`[PANEL] Sesión iniciada desde ${ip}`);
-			return send(req, res, 200, { token: makeToken(), expiresIn: TOKEN_TTL_MS });
+			logger.info(`[PANEL] Sesión de ${role === "admin" ? "administrador" : "invitado"} iniciada desde ${ip}`);
+			return send(req, res, 200, { token: makeToken(role), expiresIn: TOKEN_TTL_MS, role, perms: permsFor(role) });
 		}
 
 		// ---- a partir de aquí todo requiere token ----
 		const auth = String(req.headers.authorization ?? "");
-		if (!auth.startsWith("Bearer ") || !verifyToken(auth.slice(7))) throw new HttpError(401, "Sesión no válida o expirada.");
+		const role = auth.startsWith("Bearer ") ? verifyToken(auth.slice(7)) : null;
+		if (!role) throw new HttpError(401, "Sesión no válida o expirada.");
+		const isAdmin = role === "admin";
+		const perms = permsFor(role);
+		const guildAllowed = (id: string) => isAdmin || !guestGuilds.length || guestGuilds.includes(id);
+		const need = (perm: string) => {
+			if (!perms.includes(perm)) throw new HttpError(403, "No tienes permiso para hacer esto.");
+		};
+		if (!isAdmin && method === "POST") {
+			const ip = clientIp(req);
+			const now = Date.now();
+			const h = guestHits.get(ip);
+			const cur = h && h.reset > now ? h : { n: 0, reset: now + 60_000 };
+			cur.n++;
+			guestHits.set(ip, cur);
+			if (cur.n > 40) {
+				res.setHeader("Retry-After", Math.ceil((cur.reset - now) / 1000));
+				throw new HttpError(429, "Vas muy rápido. Espera un momento.");
+			}
+		}
+		const adminOnly = () => {
+			if (!isAdmin) throw new HttpError(403, "Solo el administrador puede hacer esto.");
+		};
+
+		if (method === "GET" && path === "/me") return send(req, res, 200, { role, perms });
 
 		if (method === "GET" && path === "/overview") {
+			adminOnly();
 			const list = await rpc.all("stats");
 			const sum = (k: string) => list.reduce((a, s) => a + (s[k] || 0), 0);
 			const first = list[0] ?? {};
@@ -298,16 +349,18 @@ export function startPanelServer(manager: ShardingManager): void {
 
 		if (method === "GET" && path === "/guilds") {
 			const lists = await rpc.all("guilds");
-			return send(req, res, 200, { guilds: lists.flat() });
+			return send(req, res, 200, { guilds: lists.flat().filter((g: any) => guildAllowed(g.id)) });
 		}
 
 		if (method === "GET" && path === "/search") {
+			need("play");
 			const q = url.searchParams.get("q") ?? "";
 			const source = url.searchParams.get("source") ?? undefined;
 			return send(req, res, 200, await rpc.one("search", { query: q, source }, "any", 45_000));
 		}
 
 		if (method === "GET" && path === "/logs") {
+			adminOnly();
 			const limit = Math.min(500, Number(url.searchParams.get("limit")) || 200);
 			const shardLogs = (await rpc.all("logs", { limit }).catch(() => [])).flat();
 			const own = getLogs(limit);
@@ -316,6 +369,7 @@ export function startPanelServer(manager: ShardingManager): void {
 		}
 
 		if (method === "POST" && path === "/presence") {
+			adminOnly();
 			const body = await readJson(req);
 			const replies = await rpc.call("presence", body, "all");
 			const bad = replies.find((r) => r.ok === false);
@@ -324,10 +378,12 @@ export function startPanelServer(manager: ShardingManager): void {
 		}
 
 		if (method === "POST" && path === "/deploy") {
+			adminOnly();
 			return send(req, res, 200, await rpc.one("deploy", {}, "any", 60_000));
 		}
 
 		if (method === "POST" && path === "/restart") {
+			adminOnly();
 			logger.warn("[PANEL] Reinicio solicitado desde el panel.");
 			send(req, res, 200, { ok: true });
 			setTimeout(() => {
@@ -346,12 +402,36 @@ export function startPanelServer(manager: ShardingManager): void {
 		const m = path.match(/^\/guilds\/(\d{5,25})(?:\/([a-z-]+))?$/);
 		if (m) {
 			const [, guildId, sub] = m;
-			if (method === "GET" && !sub) return send(req, res, 200, await rpc.one("guild", { guildId }, "guild"));
+			if (!guildAllowed(guildId)) throw new HttpError(403, "No tienes acceso a este servidor.");
+			if (method === "GET" && !sub) {
+				const d = await rpc.one("guild", { guildId }, "guild");
+				if (!isAdmin) {
+					// El invitado no ve ajustes, roles ni canales de texto.
+					d.settings = undefined;
+					d.textChannels = undefined;
+				}
+				return send(req, res, 200, d);
+			}
 			if (method === "GET" && sub === "state") return send(req, res, 200, await rpc.one("state", { guildId }, "guild"));
 
 			if (method === "POST") {
 				const body = await readJson(req);
 				const args = { ...body, guildId };
+				if (!isAdmin) {
+					const CONTROL = ["pause", "resume", "toggle", "skip", "previous", "seek", "volume", "loop", "autoplay"];
+					const QUEUE = ["remove", "move", "skipto", "shuffle", "clear", "stop"];
+					if (sub === "control") {
+						const op = String(body.op);
+						if (op === "volume") args.value = Math.min(100, Number(body.value) || 0); // los invitados no pasan de 100 %
+						if (op === "join") need("play");
+						else if (op === "leave" || op === "move-voice") need("voice");
+						else if (CONTROL.includes(op)) need("control");
+						else if (QUEUE.includes(op)) need("queue");
+						else throw new HttpError(403, "No tienes permiso para hacer esto.");
+					} else if (sub === "play") need("play");
+					else if (sub === "filter") need("filters");
+					else adminOnly();
+				}
 				const routes: Record<string, [string, number]> = {
 					control: ["control", 30_000],
 					play: ["play", 60_000],
@@ -433,6 +513,7 @@ export function startPanelServer(manager: ShardingManager): void {
 
 	server.on("error", (e) => logger.error("[PANEL] No se pudo iniciar el servidor:", e));
 	server.listen(listenPort, "0.0.0.0", () => {
+		if (guestEnabled) logger.info(`[PANEL] Acceso de invitado activo${guestOpen ? " (abierto, sin contraseña)" : ""} (permisos: ${guestPerms.join(", ") || "solo ver"}; servidores: ${guestGuilds.length ? guestGuilds.join(", ") : "todos"})`);
 		logger.start(`[PANEL] Escuchando en el puerto ${listenPort}${password ? "" : " (SIN contraseña: panel desactivado)"}`);
 		if (password && password.length < 10) logger.warn("[PANEL] PANEL_PASSWORD es corta: usa 12+ caracteres.");
 		if (!panelDir) logger.warn("[PANEL] No se encontró la carpeta panel/: solo se sirve la API.");

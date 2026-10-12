@@ -47,3 +47,18 @@ Si no defines `PANEL_API_URL`, el login te pedirá la dirección del bot.
 
 ## Spotify
 Puedes usar `k!play` con enlaces de canciones, **playlists y álbumes** de Spotify. El audio sale de YouTube (se busca cada canción justo antes de sonar). Sin credenciales se leen hasta 100 canciones de listas públicas; para listas más largas crea una app en https://developer.spotify.com/dashboard y define `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` en Heroku.
+
+## Acceso de invitado (para tu comunidad)
+Además de tu contraseña de administrador, puedes dar otra a tus usuarios. El invitado **no ve**: resumen del bot, registro, ajustes, presencia, reinicio ni otros servidores. Solo ve los servidores y puede hacer lo que tú permitas.
+
+| Variable | Qué hace |
+|---|---|
+| `PANEL_GUEST_PASSWORD` | Contraseña de invitado (distinta a la de admin). Sin ella no hay acceso de invitado. |
+| `PANEL_GUEST_GUILDS` | IDs de servidores permitidos, separados por coma. Vacío = todos donde está el bot. |
+| `PANEL_GUEST_PERMS` | `play` (buscar y añadir), `control` (pausa, saltar, volumen, repetir), `queue` (quitar, mover, vaciar, mezclar, detener), `filters` (filtros de audio), `voice` (unir, mover y desconectar al bot de canales de voz). Por defecto: **todos**, es decir, lo mismo que un miembro puede hacer con el bot en Discord. El volumen del invitado se limita a 100 % y hay un máximo de 40 acciones por minuto por IP. |
+
+Ejemplo: `PANEL_GUEST_PASSWORD=musica2026`, `PANEL_GUEST_GUILDS=123456789012345678`, `PANEL_GUEST_PERMS=play,control`.
+Entran por la misma dirección del panel; según la contraseña que escriban, ven una versión u otra.
+
+### Invitado sin contraseña
+Define `PANEL_GUEST_OPEN=true` (y obligatoriamente `PANEL_GUEST_GUILDS`). La pantalla de entrada mostrará **Entrar como invitado** sin pedir nada. Enlace directo: `https://TUUSUARIO.github.io/REPO/#invitado` entra solo. Cualquiera con el enlace podrá usarlo, así que si hay abuso, quita permisos (por ejemplo `play,control`).

@@ -68,7 +68,7 @@
   const S = {
     base: "", token: "", view: "home", guildId: null, tab: "player",
     overview: null, guilds: [], guild: null, pl: null, plAt: 0, dragging: false,
-    guildFetchedAt: 0, rail: "", logsAuto: true,
+    guildFetchedAt: 0, rail: "", logsAuto: true, role: "admin", perms: [],
   };
   const LS = {
     get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -103,6 +103,7 @@
     if (!res.ok) throw new Error((data && data.error) || `Error ${res.status}`);
     return data;
   }
+  const can = (cat) => S.role === "admin" || S.perms.includes(cat);
   const act = async (fn, okMsg) => {
     try { const r = await fn(); if (okMsg) toast(okMsg, "ok"); return r; } catch (e) { toast(e.message, "err"); return null; }
   };
@@ -132,6 +133,7 @@
     const url = h("input", { class: "input", type: "url", placeholder: "https://tu-app.herokuapp.com", value: S.base, id: "api-url" });
     const urlField = h("label", { class: "field", hidden: !needsUrl }, h("span", { text: "Dirección del bot (Heroku)" }), url);
     const btn = h("button", { class: "btn primary", type: "submit", text: "Entrar" });
+    const guestBtn = h("button", { class: "btn", type: "button", hidden: true, text: "Entrar como invitado", onclick: () => guestLogin(err) });
     const form = h("form", {
       onsubmit: async (e) => {
         e.preventDefault();
@@ -155,7 +157,7 @@
     },
       urlField,
       h("label", { class: "field" }, h("span", { text: "Contraseña del panel" }), pass),
-      err, btn,
+      err, btn, guestBtn,
       needsUrl ? null : h("button", { class: "btn small", type: "button", text: "Usar otra dirección de bot", onclick: () => { urlField.hidden = false; url.focus(); } }),
     );
     root.append(h("main", { class: "login" }, h("div", { class: "login-card" },
@@ -164,16 +166,31 @@
       h("p", { text: "Controla el bot desde el navegador: reproduce, ordena la cola y ajusta cada servidor." }),
       form)));
     (needsUrl ? url : pass).focus();
+    if (S.base) fetch(S.base + "/api/health").then((r) => r.json()).then((d) => { if (d.guestOpen) { guestBtn.hidden = false; btn.textContent = "Entrar como administrador"; } }).catch(() => {});
+  }
+
+  async function guestLogin(err) {
+    try {
+      const r = await api("/login", { method: "POST", body: { guest: true } });
+      S.token = r.token;
+      LS.set("kasper.token", JSON.stringify({ t: r.token, exp: Date.now() + r.expiresIn - 60000 }));
+      startApp();
+      return true;
+    } catch (ex) { if (err) err.textContent = ex.message; return false; }
   }
 
   /* ------------------------------------------------------------ shell */
   let loops = [];
   const stopLoops = () => { loops.forEach(clearInterval); loops = []; };
 
-  function startApp() {
+  async function startApp() {
+    try {
+      const me = await api("/me");
+      S.role = me.role; S.perms = me.perms || [];
+    } catch (e) { if (S.token) { toast(e.message, "err"); logout(); } return; }
     const root = $("#app");
     root.replaceChildren();
-    const nav = [["home", "Resumen"], ["bot", "Bot"], ["logs", "Registro"]];
+    const nav = S.role === "admin" ? [["home", "Resumen"], ["bot", "Bot"], ["logs", "Registro"]] : [["home", "Servidores"]];
     const navEl = h("nav", { class: "nav", "aria-label": "Secciones" }, nav.map(([id, label]) =>
       h("button", { "data-view": id, text: label, onclick: () => go(id) })));
     root.append(h("div", { class: "shell" },
@@ -204,8 +221,8 @@
     main.replaceChildren();
     main.scrollTop = 0;
     if (view === "home") renderHome(main);
-    else if (view === "bot") renderBot(main);
-    else if (view === "logs") renderLogs(main);
+    else if (view === "bot" && S.role === "admin") renderBot(main);
+    else if (view === "logs" && S.role === "admin") renderLogs(main);
     else if (view === "guild") openGuild(main, guildId);
   }
 
@@ -219,7 +236,7 @@
         const st = await api(`/guilds/${S.guildId}/state`);
         if (S.view === "guild") applyPlayer(st.player);
         if (S.tab === "settings" ? false : now - S.guildFetchedAt > 30000) loadGuildDetail(true);
-      } else if (S.view === "home") await loadOverview();
+      } else if (S.view === "home" && S.role === "admin") await loadOverview();
       else if (S.view === "logs") await loadLogs();
       if (now - (tick.lastGuilds || 0) > 6000) { tick.lastGuilds = now; await refreshGuilds(); }
     } catch (e) {
@@ -229,7 +246,7 @@
 
   /* ------------------------------------------------------------ rail */
   async function refreshGuilds() {
-    try { S.guilds = (await api("/guilds")).guilds; renderRail(); } catch { /* se reintenta */ }
+    try { S.guilds = (await api("/guilds")).guilds; renderRail(); if (S.role !== "admin" && S.view === "home") paintGuestHome(); } catch { /* se reintenta */ }
   }
   function renderRail() {
     const rail = $("#rail");
@@ -247,7 +264,24 @@
 
   /* ------------------------------------------------------------ resumen */
   let homeRefs = null;
+  function renderGuestHome(main) {
+    const box = h("div", { class: "live" });
+    homeRefs = { guest: box };
+    main.append(h("div", { class: "page" }, h("h2", { text: "Servidores" }),
+      h("p", { class: "hint", text: "Elige un servidor para ver qué suena y pedir canciones." }), box));
+    paintGuestHome();
+  }
+  function paintGuestHome() {
+    if (!homeRefs?.guest) return;
+    homeRefs.guest.replaceChildren(...(S.guilds.length ? S.guilds.map((g) =>
+      h("button", { onclick: () => go("guild", g.id) },
+        h("span", { class: "art" }, safeUrl(g.icon) ? h("img", { src: g.icon, alt: "", style: "width:100%;height:100%;object-fit:cover" }) : icon("note")),
+        h("span", { style: "min-width:0" }, h("b", { text: g.name }), h("br"), h("small", { class: "hint", text: g.player?.title ? "Suena: " + g.player.title : `${g.members} miembros` })),
+        g.player && (g.player.playing || g.player.paused) ? h("span", { class: "eq" + (g.player.playing ? "" : " paused") }, h("i"), h("i"), h("i")) : null)) :
+      [h("p", { class: "empty", text: "No hay servidores disponibles." })]));
+  }
   function renderHome(main) {
+    if (S.role !== "admin") return renderGuestHome(main);
     homeRefs = { stats: h("dl", { class: "stats" }), bot: h("div", { class: "hero-bot" }), live: h("div", { class: "live" }), shards: h("tbody") };
     main.append(h("div", { class: "page" },
       h("section", { class: "panel" }, homeRefs.bot),
@@ -330,7 +364,8 @@
   function openGuild(main, id) {
     const summary = S.guilds.find((g) => g.id === id);
     G = {};
-    const tabs = [["player", "Reproductor"], ["queue", "Cola"], ["filters", "Filtros"], ["settings", "Ajustes"]];
+    const tabs = [["player", "Reproductor"], ["queue", "Cola"], ["filters", "Filtros"], ["settings", "Ajustes"]]
+      .filter(([k]) => (k === "filters" ? can("filters") : k === "settings" ? S.role === "admin" : true));
     G.tabButtons = tabs.map(([key, label]) => h("button", { role: "tab", "aria-selected": String(key === "player"), onclick: () => setTab(key), text: label, "data-tab": key }));
     G.head = h("div", { class: "g-head" },
       h("span", { class: "av" }, summary && safeUrl(summary.icon) ? h("img", { src: summary.icon, alt: "" }) : (summary?.name || "?").slice(0, 2).toUpperCase()),
@@ -338,11 +373,12 @@
     G.voice = h("select", { class: "input", "aria-label": "Canal de voz", style: "width:auto;min-width:180px" });
     G.joinBtn = h("button", { class: "btn", text: "Unir al canal", onclick: () => joinOrMove() });
     G.leaveBtn = h("button", { class: "btn danger", text: "Desconectar", onclick: () => ctl("leave") });
-    G.head.append(G.voice, G.joinBtn, G.leaveBtn);
+    if (can("voice")) G.head.append(G.voice, G.joinBtn, G.leaveBtn);
+    else if (can("play")) G.head.append(G.voice); // el invitado solo elige canal si el bot aún no está conectado
     G.panes = { player: h("div", { class: "stack", role: "tabpanel" }), queue: h("div", { class: "stack", role: "tabpanel", hidden: true }), filters: h("div", { class: "stack", role: "tabpanel", hidden: true }), settings: h("div", { class: "stack", role: "tabpanel", hidden: true }) };
     main.append(h("div", { class: "page" }, G.head, h("div", { class: "tabs", role: "tablist" }, G.tabButtons), G.panes.player, G.panes.queue, G.panes.filters, G.panes.settings));
     buildPlayerPane(); buildQueuePane(); buildFiltersPane();
-    G.panes.settings.append(h("p", { class: "empty", text: "Cargando…" }));
+    if (S.role === "admin") G.panes.settings.append(h("p", { class: "empty", text: "Cargando…" }));
     loadGuildDetail(false);
     api(`/guilds/${id}/state`).then((st) => applyPlayer(st.player)).catch(() => {});
   }
@@ -351,7 +387,7 @@
     S.tab = key;
     G.tabButtons.forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === key)));
     for (const [k, el] of Object.entries(G.panes)) el.hidden = k !== key;
-    if (key === "settings") loadGuildDetail(false);
+    if (key === "settings" && S.role === "admin") loadGuildDetail(false);
   }
 
   async function loadGuildDetail(quiet) {
@@ -362,13 +398,14 @@
       S.guild = d; S.guildFetchedAt = Date.now();
       G.head.querySelector("h2").textContent = d.name;
       fillVoiceSelect();
-      if (!quiet || S.tab !== "settings") buildSettings();
+      if (S.role === "admin" && (!quiet || S.tab !== "settings")) buildSettings();
       applyPlayer(d.player);
     } catch (e) { if (!quiet) toast(e.message, "err"); }
   }
 
   function fillVoiceSelect() {
     const d = S.guild;
+    if (!G.voice.isConnected && S.role !== "admin" && !can("play")) return;
     const cur = G.voice.value;
     const want = S.pl?.voiceChannelId || cur || [...d.voiceChannels].sort((a, b) => b.members - a.members)[0]?.id;
     G.voice.replaceChildren(...d.voiceChannels.map((c) => h("option", { value: c.id, selected: c.id === want, text: `🔊 ${c.name}${c.members ? ` (${c.members})` : ""}` })));
@@ -432,7 +469,8 @@
         ["next", "Reproducir a continuación", () => addTrack(t.uri, true, t.title)],
       ])) : [h("p", { class: "empty", text: "Sin resultados. Prueba con otras palabras." })]));
     } }, R.q, R.src, R.searchBtn);
-    G.panes.player.append(R.card, h("section", { class: "panel" }, h("h3", { text: "Añadir música" }), form, R.results));
+    G.panes.player.append(R.card);
+    if (can("play")) G.panes.player.append(h("section", { class: "panel" }, h("h3", { text: "Añadir música" }), form, R.results));
   }
 
   async function addTrack(query, next, title) {
@@ -455,9 +493,10 @@
   /* ---- cola ---- */
   function buildQueuePane() {
     G.q = { list: h("div", { class: "queue" }), info: h("p", { class: "hint" }) };
+    G.q.tools = h("div", { class: "row" }, h("button", { class: "btn small", text: "Mezclar", onclick: () => ctl("shuffle") }), h("button", { class: "btn small danger", text: "Vaciar cola", onclick: () => ctl("clear") }));
     G.panes.queue.append(h("section", { class: "panel" },
       h("div", { class: "row", style: "justify-content:space-between;margin-bottom:12px" }, h("h3", { style: "margin:0", text: "Próximas canciones" }),
-        h("div", { class: "row" }, h("button", { class: "btn small", text: "Mezclar", onclick: () => ctl("shuffle") }), h("button", { class: "btn small danger", text: "Vaciar cola", onclick: () => ctl("clear") }))),
+        G.q.tools),
       G.q.info, G.q.list));
   }
   function paintQueue(pl) {
@@ -465,10 +504,11 @@
     if (G.q.sig === sig) return;
     G.q.sig = sig;
     const q = pl?.queue || [];
-    G.q.info.textContent = q.length ? `${pl.queueTotal} en cola · ${fmt(pl.queueDuration)} en total. Arrastra para reordenar.` : "";
+    G.q.info.textContent = q.length ? `${pl.queueTotal} en cola · ${fmt(pl.queueDuration)} en total.${can("queue") ? " Arrastra para reordenar." : ""}` : "";
     G.q.list.replaceChildren(...(q.length ? q.map((t, i) => {
-      const row = trackRow(t, [["play", "Saltar a esta canción", () => ctl("skipto", { index: i + 1 })], ["x", "Quitar de la cola", () => ctl("remove", { index: i + 1 })]],
-        { draggable: true, lead: h("span", { class: "n", text: String(i + 1) }) });
+      const cq = can("queue");
+      const row = trackRow(t, cq ? [["play", "Saltar a esta canción", () => ctl("skipto", { index: i + 1 })], ["x", "Quitar de la cola", () => ctl("remove", { index: i + 1 })]] : [],
+        { draggable: cq, lead: h("span", { class: "n", text: String(i + 1) }) });
       row.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", String(i)); e.dataTransfer.effectAllowed = "move"; row.classList.add("drag"); });
       row.addEventListener("dragend", () => row.classList.remove("drag"));
       row.addEventListener("dragover", (e) => { e.preventDefault(); row.classList.add("over"); });
@@ -518,6 +558,13 @@
     R.card.classList.toggle("is-idle", !active);
     G.joinBtn.textContent = pl?.connected ? "Mover aquí" : "Unir al canal";
     G.leaveBtn.hidden = !pl;
+    if (!can("voice")) G.voice.hidden = !!pl?.connected;
+    const cc = can("control"), cq = can("queue");
+    for (const b of [R.play, R.prev, R.next, R.loop, R.auto]) b.hidden = !cc;
+    R.shuffle.hidden = !cq; R.stop.hidden = !cq;
+    R.vol.disabled = !cc; R.seek.disabled = !cc || !!cur?.isStream;
+    R.vol.closest(".vol").hidden = !cc;
+    G.q.tools.hidden = !cq;
     if (pl?.voiceChannelId && !G.voice.matches(":focus")) G.voice.value = pl.voiceChannelId;
     if (active) {
       if (R.title.dataset.k !== cur.title + cur.uri) {
@@ -528,8 +575,7 @@
         setBg(R.art, cur.artwork); setBg(R.bg, cur.artwork);
         R.art.replaceChildren(...(safeUrl(cur.artwork) ? [] : [icon("note")]));
         R.dur.textContent = cur.isStream ? "En vivo" : fmt(cur.duration);
-        R.seek.disabled = cur.isStream;
-      }
+        }
       R.play.replaceChildren(icon(pl.paused ? "play" : "pause"));
       const pl2 = pl.paused ? "Reanudar" : "Pausar";
       R.play.title = pl2; R.play.setAttribute("aria-label", pl2);
@@ -596,11 +642,12 @@
     let saved = null;
     try { saved = JSON.parse(LS.get("kasper.token") || "null"); } catch { /* ignorado */ }
     if (saved && saved.t && saved.exp > Date.now() && S.base) { S.token = saved.t; startApp(); }
+    else if (location.hash === "#invitado" && S.base) guestLogin().then((ok) => ok || showLogin());
     else showLogin();
   }
   document.addEventListener("keydown", (e) => {
     if (S.view !== "guild" || !G || /input|select|textarea/i.test(e.target.tagName)) return;
-    if (e.code === "Space") { e.preventDefault(); ctl("toggle"); }
+    if (e.code === "Space" && can("control")) { e.preventDefault(); ctl("toggle"); }
   });
   boot();
 })();
