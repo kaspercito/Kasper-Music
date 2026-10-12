@@ -83,6 +83,9 @@ export default class Play extends Command {
 		if (!player.connected) await player.connect();
 
 		const response = (await player.search({ query: query }, ctx.author)) as SearchResult;
+		if (response?.loadType === "error" && response.exception?.message) {
+			return await ctx.editMessage({ content: "", embeds: [fail(response.exception.message)] });
+		}
 		if (!response || response.tracks?.length === 0) {
 			return await ctx.editMessage({
 				content: "",

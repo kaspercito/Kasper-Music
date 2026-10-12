@@ -8,7 +8,9 @@ import {
 	type LoadResult,
 	type LocalTrack,
 	decodeTrack,
+	isSpotifyCollection,
 	loadUrl,
+	spotifyCollection,
 	searchPrefix,
 	spotifyTrackQuery,
 } from "./sources";
@@ -140,6 +142,8 @@ export class LocalManager extends EventEmitter {
 		try {
 			if (q.source === "local") {
 				result = await loadUrl(text, true);
+			} else if (URL_RE.test(text) && isSpotifyCollection(text)) {
+				result = (await spotifyCollection(text)) ?? { loadType: "empty", tracks: [], playlist: null };
 			} else if (URL_RE.test(text)) {
 				const spotify = await spotifyTrackQuery(text).catch(() => null);
 				if (spotify) {

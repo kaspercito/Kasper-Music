@@ -1,4 +1,5 @@
 import { type ClientOptions, GatewayIntentBits, Options, Sweepers } from "discord.js";
+import { setupPanelShard } from "./api/shardHandler";
 import { env } from "./env";
 import Lavamusic from "./structures/Lavamusic";
 import { setupAntiCrash } from "./utils/ProcessHandlers";
@@ -46,6 +47,7 @@ export async function launch() {
 
 	const client = new Lavamusic(clientOptions);
 	setupAntiCrash(client);
+	setupPanelShard(client);
 	await client.start(env.TOKEN);
 }
 

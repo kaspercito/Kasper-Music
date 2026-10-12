@@ -95,3 +95,6 @@ pnpm build
 
 Lavamusic is published under the **Apache License 2.0**.  
 See the [LICENSE](https://github.com/bongodevs/lavamusic/blob/HEAD/LICENSE) file for more details.
+
+## Panel web
+Control del bot desde el navegador: ver [PANEL.md](PANEL.md).

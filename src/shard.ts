@@ -1,5 +1,6 @@
 import { ShardEvents, ShardingManager } from "discord.js";
 import { env } from "./env";
+import { startPanelServer } from "./api/manager";
 import logger from "./structures/Logger";
 
 /**
@@ -31,6 +32,13 @@ export async function start() {
 			logger.error(`[MANAGER] Shard ${shard.id} error:`, err);
 		});
 	});
+
+	// El servidor del panel debe abrir el puerto YA (Heroku exige hacerlo en menos de 60 s).
+	try {
+		startPanelServer(manager);
+	} catch (error) {
+		logger.error("[PANEL] No se pudo iniciar el panel:", error);
+	}
 
 	try {
 		// Disable timeout to allow heavy DB initialization (prevent ShardingReadyDied)

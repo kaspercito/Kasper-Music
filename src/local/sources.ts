@@ -249,6 +249,19 @@ export async function loadUrl(url: string, forceDirect = false): Promise<LoadRes
 /** Obtiene la URL real de audio justo antes de reproducir (las URLs de YouTube caducan). */
 export async function resolveStream(track: LocalTrack): Promise<ResolvedStream> {
 	const { sourceName, uri, isStream } = track.info;
+	if (sourceName === "spotify") {
+		// Spotify no entrega audio: se busca la canción en YouTube justo antes de sonar (y se recuerda).
+		let yt: string | undefined = track.pluginInfo?.resolvedUri;
+		if (!yt) {
+			const found = await searchPrefix("ytsearch", `${track.info.author} ${track.info.title}`, 5);
+			const dur = track.info.duration;
+			const best = (dur ? found.find((f) => Math.abs(f.info.duration - dur) < 15_000) : undefined) ?? found[0];
+			if (!best) throw new Error(`No encontré "${track.info.title}" en YouTube`);
+			yt = best.info.uri;
+			track.pluginInfo = { ...(track.pluginInfo ?? {}), resolvedUri: yt };
+		}
+		return { url: yt, headers: {}, isLive: false, viaYtdlp: true };
+	}
 	if (sourceName === "local" || sourceName === "radio" || (sourceName === "http" && looksLikeDirectMedia(uri))) {
 		return { url: uri, headers: {}, isLive: isStream };
 	}
@@ -295,4 +308,142 @@ export async function spotifyTrackQuery(url: string): Promise<string | null> {
 	const parsed = m.match(/^(.*?)\s*-\s*(?:song|canción|canci&#x27;on)[^|]*?\bby\s+(.*?)\s*\|/i);
 	if (parsed) return `${parsed[2]} ${parsed[1]}`.replace(/&amp;/g, "&").replace(/&#x27;/g, "'");
 	return m.replace(/\|\s*Spotify.*$/i, "").trim();
+}
+
+
+/* ------------------------------------------------------------------ Spotify: playlists y álbumes */
+
+const SPOTIFY_COLLECTION = /open\.spotify\.com\/(?:intl-[a-z-]+\/)?(playlist|album)\/([A-Za-z0-9]+)/;
+
+export const isSpotifyCollection = (url: string): boolean => SPOTIFY_COLLECTION.test(url);
+
+interface SpotifyItem {
+	id: string;
+	title: string;
+	artist: string;
+	duration: number;
+	image: string | null;
+}
+
+function findTrackList(node: any, depth = 0): any[] | null {
+	if (!node || typeof node !== "object" || depth > 9) return null;
+	if (Array.isArray(node.trackList) && node.trackList.length) return node.trackList;
+	for (const v of Object.values(node)) {
+		const r = findTrackList(v, depth + 1);
+		if (r) return r;
+	}
+	return null;
+}
+
+function findEntity(node: any, depth = 0): any | null {
+	if (!node || typeof node !== "object" || depth > 9) return null;
+	if (Array.isArray(node.trackList)) return node;
+	for (const v of Object.values(node)) {
+		const r = findEntity(v, depth + 1);
+		if (r) return r;
+	}
+	return null;
+}
+
+/** Sin credenciales: lee la página de incrustación pública (hasta 100 canciones). */
+async function spotifyViaEmbed(kind: string, id: string) {
+	const res = await fetch(`https://open.spotify.com/embed/${kind}/${id}`, {
+		headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36", "Accept-Language": "es,en;q=0.8" },
+	});
+	if (!res.ok) throw new Error(`Spotify respondió ${res.status}`);
+	const html = await res.text();
+	const raw = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)?.[1];
+	if (!raw) throw new Error("Spotify cambió su página y no pude leer la lista");
+	const data = JSON.parse(raw);
+	const entity = findEntity(data);
+	const list = findTrackList(data);
+	if (!list || !entity) throw new Error("La lista está vacía o es privada");
+	const image: string | null = entity.coverArt?.sources?.[0]?.url ?? entity.visualIdentity?.image?.[0]?.url ?? null;
+	const items: SpotifyItem[] = list
+		.filter((t: any) => t?.title)
+		.map((t: any) => ({
+			id: String(t.uri ?? "").split(":").pop() || String(t.title),
+			title: String(t.title),
+			artist: String(t.subtitle ?? "").replace(/\u00a0/g, " "),
+			duration: Number(t.duration) || 0,
+			image,
+		}));
+	return { name: String(entity.name ?? entity.title ?? "Spotify"), items };
+}
+
+/** Con SPOTIFY_CLIENT_ID y SPOTIFY_CLIENT_SECRET: API oficial (sin límite de 100). */
+async function spotifyViaApi(kind: string, id: string) {
+	const cid = process.env.SPOTIFY_CLIENT_ID;
+	const secret = process.env.SPOTIFY_CLIENT_SECRET;
+	if (!cid || !secret) throw new Error("sin credenciales de la API");
+	const tk = await fetch("https://accounts.spotify.com/api/token", {
+		method: "POST",
+		headers: { Authorization: `Basic ${Buffer.from(`${cid}:${secret}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded" },
+		body: "grant_type=client_credentials",
+	});
+	if (!tk.ok) throw new Error(`Credenciales de Spotify rechazadas (${tk.status})`);
+	const token = ((await tk.json()) as any).access_token as string;
+	const get = async (u: string) => {
+		const r = await fetch(u, { headers: { Authorization: `Bearer ${token}` } });
+		if (!r.ok) throw new Error(`La API de Spotify respondió ${r.status}`);
+		return (await r.json()) as any;
+	};
+	const items: SpotifyItem[] = [];
+	let name = "Spotify";
+	if (kind === "playlist") {
+		const meta = await get(`https://api.spotify.com/v1/playlists/${id}?fields=name,images`);
+		name = meta.name ?? name;
+		let next: string | null = `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&fields=next,items(track(id,name,duration_ms,artists(name),album(images)))`;
+		while (next && items.length < 500) {
+			const page: any = await get(next);
+			for (const it of page.items ?? []) {
+				const t = it?.track;
+				if (!t?.name) continue;
+				items.push({ id: t.id ?? t.name, title: t.name, artist: (t.artists ?? []).map((a: any) => a.name).join(", "), duration: t.duration_ms ?? 0, image: t.album?.images?.[0]?.url ?? meta.images?.[0]?.url ?? null });
+			}
+			next = page.next ?? null;
+		}
+	} else {
+		const a = await get(`https://api.spotify.com/v1/albums/${id}`);
+		name = a.name ?? name;
+		for (const t of a.tracks?.items ?? []) {
+			items.push({ id: t.id, title: t.name, artist: (t.artists ?? []).map((x: any) => x.name).join(", "), duration: t.duration_ms ?? 0, image: a.images?.[0]?.url ?? null });
+		}
+	}
+	return { name, items };
+}
+
+/** Playlist o álbum de Spotify -> lista de pistas que se buscan en YouTube al reproducirse. */
+export async function spotifyCollection(url: string): Promise<LoadResult | null> {
+	const m = url.match(SPOTIFY_COLLECTION);
+	if (!m) return null;
+	const [, kind, id] = m;
+	let data: { name: string; items: SpotifyItem[] };
+	try {
+		data = await spotifyViaApi(kind, id);
+	} catch (apiErr) {
+		try {
+			data = await spotifyViaEmbed(kind, id);
+		} catch (embedErr) {
+			const why = process.env.SPOTIFY_CLIENT_ID ? (apiErr as Error).message : (embedErr as Error).message;
+			throw new Error(`No pude leer esa ${kind === "album" ? "álbum" : "playlist"} de Spotify (${why}). Verifica que sea pública.`);
+		}
+	}
+	if (!data.items.length) return empty();
+	const tracks = data.items.map((i) =>
+		makeTrack({
+			identifier: i.id,
+			title: i.title,
+			author: i.artist,
+			duration: i.duration,
+			artworkUrl: i.image,
+			uri: `https://open.spotify.com/track/${i.id}`,
+			sourceName: "spotify",
+		}),
+	);
+	return {
+		loadType: "playlist",
+		tracks,
+		playlist: { name: data.name, title: data.name, duration: tracks.reduce((a, t) => a + t.info.duration, 0), uri: url },
+	};
 }

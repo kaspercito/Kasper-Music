@@ -1,1 +1,1 @@
-worker: sh bin/heroku-start.sh
+web: sh bin/heroku-start.sh

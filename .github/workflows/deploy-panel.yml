@@ -1,0 +1,38 @@
+name: Publicar panel en GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+    paths: ["panel/**", ".github/workflows/deploy-panel.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-panel
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar la dirección del bot
+        env:
+          PANEL_API_URL: ${{ vars.PANEL_API_URL }}
+        run: |
+          if [ -n "$PANEL_API_URL" ]; then
+            printf 'window.KASPER_API = %s;\n' "$(printf '%s' "$PANEL_API_URL" | sed 's#/*$##' | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > panel/config.js
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: panel
+      - id: deployment
+        uses: actions/deploy-pages@v4
