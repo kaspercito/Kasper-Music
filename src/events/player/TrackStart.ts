@@ -66,9 +66,10 @@ export default class TrackStart extends Event {
 
 			player.set("messageId", message.id);
 
-			// Mantiene viva la barra de progreso: edita la tarjeta cada 10 s
+			// Mantiene viva la barra de progreso: edita la tarjeta cada 3 s
+			// (Discord limita las ediciones; ir más rápido provoca rate limits)
 			const botAvatar = this.client.user?.displayAvatarURL();
-			startTicker(guild.id, 10_000, async () => {
+			startTicker(guild.id, 3_000, async () => {
 				const p = this.client.manager.getPlayer(guild.id);
 				const cur = p?.queue.current;
 				if (!p || !cur || cur.encoded !== track.encoded) return false;

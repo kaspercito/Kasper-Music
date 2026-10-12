@@ -14,6 +14,7 @@ type Lang = "es" | "en";
 const TEXT = {
 	es: {
 		nowPlaying: "Reproduciendo ahora",
+		endsIn: "Termina",
 		next: "Siguiente",
 		searching: "Buscando",
 		searchingHint: "Esto solo tarda unos segundos…",
@@ -58,6 +59,7 @@ const TEXT = {
 	},
 	en: {
 		nowPlaying: "Now playing",
+		endsIn: "Ends",
 		next: "Up next",
 		searching: "Searching",
 		searchingHint: "This only takes a few seconds…",
@@ -214,7 +216,12 @@ export function nowPlayingEmbed(
 
 	const bar = isLive
 		? `🔴 **${T.live}**`
-		: `\`${formatMs(pos)}\` ${progressLine(pos, dur)} \`${formatMs(dur)}\``;
+		: `\`${formatMs(pos)}\` ${progressLine(pos, dur, 18)} \`${formatMs(dur)}\``;
+
+	// Contador en vivo del lado del cliente de Discord (se actualiza solo, sin editar el mensaje)
+	const endsAt =
+		!isLive && !paused && dur > 0 ? Math.floor((Date.now() + Math.max(0, dur - pos)) / 1000) : null;
+	const endsLine = endsAt ? `\n-# ⏳ ${T.endsIn} <t:${endsAt}:R>` : "";
 
 	const embed = new EmbedBuilder()
 		.setColor(paused ? config.color.paused : config.color.brand)
@@ -224,7 +231,7 @@ export function nowPlayingEmbed(
 		})
 		.setTitle(clip(info.title ?? "—", 250))
 		.setDescription(
-			`${info.author ? `🎤 **${clip(info.author, 100)}**\n\n` : ""}${bar}`,
+			`${info.author ? `🎤 **${clip(info.author, 100)}**\n\n` : ""}${bar}${endsLine}`,
 		)
 		.addFields(
 			{
