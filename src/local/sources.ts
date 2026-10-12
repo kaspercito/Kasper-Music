@@ -34,6 +34,8 @@ export interface LocalTrack {
 }
 
 export interface ResolvedStream {
+	/** Si es true, yt-dlp descarga el audio y lo pasa a FFmpeg por tubería (evita 403 de YouTube). */
+	viaYtdlp?: boolean;
 	url: string;
 	headers: Record<string, string>;
 	isLive: boolean;
@@ -70,7 +72,7 @@ function run(cmd: string, args: string[], timeoutMs = 45_000): Promise<string> {
 	});
 }
 
-function ytdlpBaseArgs(): string[] {
+export function ytdlpBaseArgs(): string[] {
 	const args = ["--ignore-config", "--no-warnings", "--no-cache-dir"];
 	if (process.env.YTDLP_COOKIES) args.push("--cookies", process.env.YTDLP_COOKIES);
 	if (process.env.YTDLP_ARGS) args.push(...process.env.YTDLP_ARGS.split(" ").filter(Boolean));
@@ -250,11 +252,9 @@ export async function resolveStream(track: LocalTrack): Promise<ResolvedStream> 
 	if (sourceName === "local" || sourceName === "radio" || (sourceName === "http" && looksLikeDirectMedia(uri))) {
 		return { url: uri, headers: {}, isLive: isStream };
 	}
-	const args = [...ytdlpBaseArgs(), "-f", "bestaudio/best", "--no-playlist", "-j", uri];
-	const json = JSON.parse(await run(YTDLP, args, 60_000));
-	const url: string | undefined = json.url ?? json.requested_formats?.[0]?.url;
-	if (!url) throw new Error("yt-dlp no devolvió una URL de audio");
-	return { url, headers: json.http_headers ?? {}, isLive: json.is_live === true };
+	// YouTube devuelve 403 cuando FFmpeg descarga la URL directamente desde un servidor.
+	// Por eso yt-dlp descarga el audio (con sus cabeceras/cookies) y FFmpeg solo lo decodifica.
+	return { url: uri, headers: {}, isLive: isStream, viaYtdlp: true };
 }
 
 /** Canciones relacionadas para el autoplay. */

@@ -17,7 +17,7 @@ import logger from "../structures/Logger";
 import { LocalFilterManager } from "./LocalFilters";
 import { LocalQueue } from "./LocalQueue";
 import type { LocalManager } from "./LocalManager";
-import { FFMPEG, type LocalTrack, relatedTracks, resolveStream } from "./sources";
+import { FFMPEG, type LocalTrack, YTDLP, relatedTracks, resolveStream, ytdlpBaseArgs } from "./sources";
 
 export type RepeatMode = "off" | "track" | "queue";
 
@@ -53,7 +53,8 @@ export class LocalPlayer {
 	private connection: VoiceConnection | null = null;
 	private audio: AudioPlayer;
 	private resource: AudioResource | null = null;
-	private ffmpeg: ChildProcessByStdio<null, Readable, Readable> | null = null;
+	private ffmpeg: any = null;
+	private ytdlp: any = null;
 	private seekOffset = 0;
 	private generation = 0;
 	private startedAt = 0;
@@ -238,7 +239,9 @@ export class LocalPlayer {
 		if (gen !== this.generation) return;
 
 		const args = ["-hide_banner", "-loglevel", "error"];
-		if (/^https?:/i.test(stream.url)) {
+		if (stream.viaYtdlp) {
+			// la entrada llega por stdin desde yt-dlp
+		} else if (/^https?:/i.test(stream.url)) {
 			args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5");
 			const headers = Object.entries(stream.headers)
 				.map(([k, v]) => `${k}: ${v}\r\n`)
@@ -246,13 +249,47 @@ export class LocalPlayer {
 			if (headers) args.push("-headers", headers);
 		}
 		if (position > 0 && !stream.isLive) args.push("-ss", (position / 1000).toFixed(3));
-		args.push("-i", stream.url, "-vn");
+		args.push("-i", stream.viaYtdlp ? "pipe:0" : stream.url, "-vn");
 		const af = this.filterManager.toFfmpeg();
 		if (af) args.push("-af", af);
 		args.push("-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1");
 
-		const ff = spawn(FFMPEG, args, { stdio: ["ignore", "pipe", "pipe"] });
+		const ff = spawn(FFMPEG, args, { stdio: [stream.viaYtdlp ? "pipe" : "ignore", "pipe", "pipe"] });
 		let stderr = "";
+		if (stream.viaYtdlp) {
+			const yt = spawn(
+				YTDLP,
+				[
+					...ytdlpBaseArgs(),
+					"-q",
+					"--no-progress",
+					"-f",
+					"bestaudio[ext=webm]/bestaudio/best",
+					"--no-playlist",
+					"--retries",
+					"3",
+					"-o",
+					"-",
+					stream.url,
+				],
+				{ stdio: ["ignore", "pipe", "pipe"] },
+			);
+			let ytErr = "";
+			yt.stderr.on("data", (d: Buffer) => {
+				ytErr += d;
+			});
+			yt.on("error", (e: any) => logger.error(`[LOCAL] yt-dlp: ${e.message}`));
+			yt.on("close", (code: number | null) => {
+				if (code && gen === this.generation) {
+					logger.warn(`[LOCAL] yt-dlp terminó con código ${code}: ${ytErr.trim().split("\n").pop()}`);
+				}
+			});
+			yt.stdout.on("error", () => undefined);
+			ff.stdin?.on("error", () => undefined);
+			yt.stdout.pipe(ff.stdin!);
+			ff.on("close", () => yt.kill("SIGKILL"));
+			this.ytdlp = yt;
+		}
 		ff.stderr.on("data", (d) => {
 			stderr += d;
 		});
@@ -287,6 +324,10 @@ export class LocalPlayer {
 	/** Detiene FFmpeg y el recurso actual sin disparar eventos de fin. */
 	private stopStream(stopAudio = true) {
 		this.resource = null;
+		if (this.ytdlp) {
+			this.ytdlp.kill("SIGKILL");
+			this.ytdlp = null;
+		}
 		if (this.ffmpeg) {
 			this.ffmpeg.kill("SIGKILL");
 			this.ffmpeg = null;

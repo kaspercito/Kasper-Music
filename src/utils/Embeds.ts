@@ -28,6 +28,7 @@ const TEXT = {
 		songs: "canciones",
 		song: "canción",
 		addedToQueue: "Añadida a la cola",
+		startingNow: "Empezando a reproducir",
 		addedPlaylist: "Playlist añadida",
 		position: "Posición",
 		playsIn: "Suena en",
@@ -64,6 +65,7 @@ const TEXT = {
 		songs: "songs",
 		song: "song",
 		addedToQueue: "Added to queue",
+		startingNow: "Starting playback",
 		addedPlaylist: "Playlist added",
 		position: "Position",
 		playsIn: "Plays in",
@@ -226,7 +228,10 @@ export function trackAddedEmbed(
 	const src = sourceOf(track);
 	const embed = new EmbedBuilder()
 		.setColor(config.color.success)
-		.setAuthor({ name: `✅  ${T.addedToQueue}`, iconURL: src.icon })
+		.setAuthor({
+			name: opts.playingNow ? `▶️  ${T.startingNow}` : `✅  ${T.addedToQueue}`,
+			iconURL: src.icon,
+		})
 		.setTitle(clip(info.title ?? "—", 250))
 		.addFields(
 			{ name: `🎤 ${T.artist}`, value: clip(info.author || "—", 100), inline: true },
@@ -236,8 +241,10 @@ export function trackAddedEmbed(
 				inline: true,
 			},
 			{
-				name: `📍 ${opts.playingNow ? T.playsIn : T.position}`,
-				value: opts.playingNow ? `**${T.playingNow}**` : `#${opts.position}  •  ${T.playsIn} ~${formatMs(opts.etaMs)}`,
+				name: `📍 ${T.position}`,
+				value: opts.playingNow
+					? `**${T.playingNow}**`
+					: `#${opts.position}  •  ${T.playsIn} ~${formatMs(opts.etaMs)}`,
 				inline: true,
 			},
 		)
