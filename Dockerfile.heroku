@@ -4,7 +4,8 @@
 FROM oven/bun:1 AS builder
 WORKDIR /app
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+# Sin --frozen-lockfile: el bun.lock del proyecto no incluye @discordjs/voice, opusscript, etc.
+RUN bun install
 COPY . .
 RUN bun run build
 
