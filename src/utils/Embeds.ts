@@ -14,6 +14,13 @@ type Lang = "es" | "en";
 const TEXT = {
 	es: {
 		nowPlaying: "Reproduciendo ahora",
+		next: "Siguiente",
+		searching: "Buscando",
+		searchingHint: "Esto solo tarda unos segundos…",
+		helpTitle: "Centro de ayuda",
+		helpIntro: "Tu bot de música con estilo. Usa los comandos con `/` o con el prefijo `{prefix}`.",
+		helpTip: "Escribe {prefix}help <comando> para ver los detalles de uno.",
+		commands: "comandos",
 		paused: "En pausa",
 		artist: "Artista",
 		duration: "Duración",
@@ -51,6 +58,13 @@ const TEXT = {
 	},
 	en: {
 		nowPlaying: "Now playing",
+		next: "Up next",
+		searching: "Searching",
+		searchingHint: "This only takes a few seconds…",
+		helpTitle: "Help center",
+		helpIntro: "Your stylish music bot. Use commands with `/` or the `{prefix}` prefix.",
+		helpTip: "Type {prefix}help <command> to see details for one.",
+		commands: "commands",
 		paused: "Paused",
 		artist: "Artist",
 		duration: "Duration",
@@ -156,6 +170,19 @@ function loopLabel(mode: string | undefined, locale?: string): string {
 	return T.loopOff;
 }
 
+function volumeBar(volume: number): string {
+	const v = Math.max(0, Math.min(100, volume));
+	const filled = Math.round((v / 100) * 5);
+	return `${"▰".repeat(filled)}${"▱".repeat(5 - filled)} ${volume}%`;
+}
+
+function nextLabel(player: Player): string {
+	const nxt = player.queue.tracks[0];
+	if (!nxt) return "—";
+	const title = clip(nxt.info.title ?? "—", 32);
+	return nxt.info.uri ? `[${title}](${nxt.info.uri})` : title;
+}
+
 function clip(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
@@ -196,7 +223,9 @@ export function nowPlayingEmbed(
 			iconURL: src.icon,
 		})
 		.setTitle(clip(info.title ?? "—", 250))
-		.setDescription(`${info.author ? `**${clip(info.author, 100)}**\n` : ""}${bar}`)
+		.setDescription(
+			`${info.author ? `🎤 **${clip(info.author, 100)}**\n\n` : ""}${bar}`,
+		)
 		.addFields(
 			{
 				name: `⏱ ${T.duration}`,
@@ -205,8 +234,9 @@ export function nowPlayingEmbed(
 			},
 			{ name: `🙋 ${T.requestedBy}`, value: requesterMention(track), inline: true },
 			{ name: `📻 ${T.upNext}`, value: String(player.queue.tracks.length), inline: true },
-			{ name: `🔊 ${T.volume}`, value: `${player.volume ?? 100}%`, inline: true },
+			{ name: `🔊 ${T.volume}`, value: volumeBar(player.volume ?? 100), inline: true },
 			{ name: `🔁 ${T.loop}`, value: loopLabel(player.repeatMode, opts.locale), inline: true },
+			{ name: `⏭ ${T.next}`, value: nextLabel(player), inline: true },
 		)
 		.setFooter({
 			text: opts.status ? `${opts.status}  •  ${src.label}` : `Kasper Music  •  ${src.label}`,
@@ -360,4 +390,51 @@ export function etaToEndOfQueue(player: Player): number {
 	const remaining = current ? Math.max(0, (current.info.duration ?? 0) - (player.position ?? 0)) : 0;
 	const queued = player.queue.tracks.reduce((a, b) => a + (b.info.duration ?? 0), 0);
 	return remaining + queued;
+}
+
+/** Tarjeta de "Buscando…" mientras se resuelve la canción. */
+export function loadingEmbed(query: string, locale?: string): EmbedBuilder {
+	const T = tx(locale);
+	const isUrl = /^https?:\/\//i.test(query);
+	return new EmbedBuilder()
+		.setColor(config.color.info)
+		.setAuthor({ name: `🔎  ${T.searching}…` })
+		.setDescription(`### ${isUrl ? "🔗" : "🎧"} ${clip(query, 150)}\n-# ⏳ ${T.searchingHint}`);
+}
+
+const CATEGORY_META: Record<string, { emoji: string; es: string; en: string }> = {
+	music: { emoji: "🎵", es: "Música", en: "Music" },
+	filters: { emoji: "🎛️", es: "Filtros", en: "Filters" },
+	playlist: { emoji: "📚", es: "Playlists", en: "Playlists" },
+	config: { emoji: "⚙️", es: "Configuración", en: "Settings" },
+	info: { emoji: "ℹ️", es: "Información", en: "Info" },
+};
+
+/** Menú de ayuda: una sección por categoría. */
+export function helpOverviewEmbed(opts: {
+	locale?: string;
+	prefix: string;
+	botName: string;
+	botAvatar?: string;
+	categories: { name: string; commands: string[] }[];
+}): EmbedBuilder {
+	const T = tx(opts.locale);
+	const lang = langOf(opts.locale);
+	const total = opts.categories.reduce((a, c) => a + c.commands.length, 0);
+	const embed = new EmbedBuilder()
+		.setColor(config.color.brand)
+		.setAuthor({ name: `${opts.botName} • ${T.helpTitle}`, iconURL: opts.botAvatar })
+		.setDescription(`${T.helpIntro.replace("{prefix}", opts.prefix)}\n\u200b`)
+		.setFooter({ text: `${total} ${T.commands}  •  ${T.helpTip.replace("{prefix}", opts.prefix)}` });
+	if (opts.botAvatar) embed.setThumbnail(opts.botAvatar);
+	for (const c of opts.categories) {
+		const meta = CATEGORY_META[c.name];
+		const label = meta ? meta[lang] : c.name;
+		embed.addFields({
+			name: `${meta?.emoji ?? "📁"} ${label}  ·  ${c.commands.length}`,
+			value: c.commands.map((n) => `\`${n}\``).join("  "),
+			inline: false,
+		});
+	}
+	return embed;
 }

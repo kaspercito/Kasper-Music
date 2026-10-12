@@ -2,6 +2,7 @@ import type { TextChannel } from "discord.js";
 import type { Player } from "lavalink-client";
 import { Event, type Lavamusic } from "../../structures/index";
 import { LavamusicEventType } from "../../types/events";
+import { stopTicker } from "../../utils/NowPlayingTicker";
 import { updateSetup } from "../../utils/SetupSystem";
 
 export default class PlayerDestroy extends Event {
@@ -13,6 +14,7 @@ export default class PlayerDestroy extends Event {
 	}
 
 	public async run(player: Player, _reason: string): Promise<void> {
+		stopTicker(player.guildId);
 		const guild = this.client.guilds.cache.get(player.guildId);
 		if (!guild) return;
 		const locale = await this.client.db.getLanguage(player.guildId);

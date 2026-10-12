@@ -17,6 +17,7 @@ import { Event, type Lavamusic } from "../../structures/index";
 import type { Requester } from "../../types";
 import { LavamusicEventType } from "../../types/events";
 import { nowPlayingEmbed } from "../../utils/Embeds";
+import { startTicker } from "../../utils/NowPlayingTicker";
 import { trackStart } from "../../utils/SetupSystem";
 
 export default class TrackStart extends Event {
@@ -64,6 +65,20 @@ export default class TrackStart extends Event {
 			});
 
 			player.set("messageId", message.id);
+
+			// Mantiene viva la barra de progreso: edita la tarjeta cada 10 s
+			const botAvatar = this.client.user?.displayAvatarURL();
+			startTicker(guild.id, 10_000, async () => {
+				const p = this.client.manager.getPlayer(guild.id);
+				const cur = p?.queue.current;
+				if (!p || !cur || cur.encoded !== track.encoded) return false;
+				if (p.paused) return true;
+				await message.edit({
+					embeds: [nowPlayingEmbed(p, cur, { locale, botAvatar })],
+					components: [createButtonRow(p)],
+				});
+				return true;
+			});
 		}
 	}
 }

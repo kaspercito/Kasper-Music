@@ -6,7 +6,7 @@ import type {
 import type { SearchResult } from "lavalink-client";
 import { I18N, t } from "../../structures/I18n";
 import { Command, type Context, type Lavamusic } from "../../structures/index";
-import { etaToEndOfQueue, fail, playlistAddedEmbed, trackAddedEmbed, tx } from "../../utils/Embeds";
+import { etaToEndOfQueue, fail, loadingEmbed, playlistAddedEmbed, trackAddedEmbed, tx } from "../../utils/Embeds";
 import { applyFairPlayToQueue } from "../../utils/functions/player";
 import {
 	Connect,
@@ -63,7 +63,10 @@ export default class Play extends Command {
 	public async run(client: Lavamusic, ctx: Context, args: string[]): Promise<any> {
 		const query = args.join(" ");
 		const locale = await client.db.getLanguage(ctx.guild.id);
-		await ctx.sendDeferMessage(ctx.locale(I18N.commands.play.loading));
+		const loading = { embeds: [loadingEmbed(query, locale)] };
+		await ctx.sendDeferMessage(loading);
+		// En comandos slash, Discord solo muestra "pensando…": se reemplaza por la tarjeta de búsqueda
+		if (ctx.isInteraction) await ctx.editMessage(loading).catch(() => null);
 		let player = client.manager.getPlayer(ctx.guild.id);
 		const memberVoiceChannel = (ctx.member as any).voice.channel as VoiceChannel;
 

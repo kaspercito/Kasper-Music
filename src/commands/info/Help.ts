@@ -1,3 +1,4 @@
+import { helpOverviewEmbed } from "../../utils/Embeds";
 import { I18N } from "../../structures/I18n";
 import { Command, type Context, type Lavamusic } from "../../structures/index";
 import { EmbedLinks, ReadMessageHistory, SendMessages, ViewChannel } from "../../utils/Permissions";
@@ -92,28 +93,18 @@ export default class Help extends Command {
 			return await ctx.sendMessage({ embeds: [helpEmbed] });
 		}
 
-		const fields = categories.map((category) => ({
-			name: category,
-			value: commands
-				.filter((cmd) => cmd.category === category)
-				.map((cmd) => `\`${cmd.name}\``)
-				.join(", "),
-			inline: false,
-		}));
+		const helpLocale = await client.db.getLanguage(ctx.guild.id);
 
-		const helpEmbed = embed
-			.setColor(client.color.main)
-			.setTitle(ctx.locale(I18N.commands.help.title))
-			.setDescription(
-				ctx.locale(I18N.commands.help.content, {
-					bot: client.user?.username,
-					prefix: guild.prefix,
-				}),
-			)
-			.setFooter({
-				text: ctx.locale(I18N.commands.help.footer, { prefix: guild.prefix }),
-			})
-			.addFields(...fields);
+		const helpEmbed = helpOverviewEmbed({
+			locale: helpLocale,
+			prefix: guild.prefix,
+			botName: client.user?.username ?? "Kasper Music",
+			botAvatar: client.user?.displayAvatarURL(),
+			categories: categories.map((category) => ({
+				name: category,
+				commands: commands.filter((cmd) => cmd.category === category).map((cmd) => cmd.name),
+			})),
+		});
 
 		return await ctx.sendMessage({ embeds: [helpEmbed] });
 	}
