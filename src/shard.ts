@@ -1,5 +1,6 @@
 import { ShardEvents, ShardingManager } from "discord.js";
 import { env } from "./env";
+import { launch } from "./LavaClient";
 import { startPanelServer } from "./api/manager";
 import logger from "./structures/Logger";
 
@@ -7,6 +8,25 @@ import logger from "./structures/Logger";
  * Starts the Sharding Manager
  */
 export async function start() {
+	// Por defecto TODO corre en un solo proceso (ahorra ~150 MB de RAM; ideal para Heroku de 512 MB).
+	// Con USE_SHARDING=true vuelve el ShardingManager (solo hace falta con miles de servidores).
+	if (process.env.USE_SHARDING !== "true") {
+		let client: Awaited<ReturnType<typeof launch>> | null = null;
+		try {
+			startPanelServer(null, () => client);
+		} catch (error) {
+			logger.error("[PANEL] No se pudo iniciar el panel:", error);
+		}
+		try {
+			client = await launch();
+			logger.start("[MANAGER] Bot iniciado en un solo proceso.");
+		} catch (error) {
+			logger.error("[MANAGER] Error al iniciar el bot:", error);
+			process.exit(1);
+		}
+		return;
+	}
+
 	const shardPath = process.argv[1];
 
 	const manager = new ShardingManager(shardPath, {

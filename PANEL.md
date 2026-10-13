@@ -62,3 +62,6 @@ Entran por la misma dirección del panel; según la contraseña que escriban, ve
 
 ### Invitado sin contraseña
 Define `PANEL_GUEST_OPEN=true` (y obligatoriamente `PANEL_GUEST_GUILDS`). La pantalla de entrada mostrará **Entrar como invitado** sin pedir nada. Enlace directo: `https://TUUSUARIO.github.io/REPO/#invitado` entra solo. Cualquiera con el enlace podrá usarlo, así que si hay abuso, quita permisos (por ejemplo `play,control`).
+
+## ¿En qué canal publica el bot "Reproduciendo ahora"?
+Cuando pones música desde el panel, el bot usa (en este orden): `PANEL_TEXT_CHANNEL` → el canal del reproductor actual → el canal de `/setup` → el canal de 24/7 → un canal cuyo nombre contenga música, music, comandos o bot. Para fijarlo, copia el ID del canal en Discord (Modo desarrollador → clic derecho en el canal → *Copiar ID*) y ponlo en `PANEL_TEXT_CHANNEL` en Heroku.

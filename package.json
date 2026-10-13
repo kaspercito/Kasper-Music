@@ -9,7 +9,7 @@
     "build": "bun run scripts/build.ts",
     "predev": "bun run generate",
     "dev": "bun --watch src/index.ts",
-    "start": "bun run dist/index.js",
+    "start": "bun --smol run dist/index.js",
     "start:src": "bun run src/index.ts",
     "db:push": "drizzle-kit migrate --config=drizzle.config.ts",
     "db:drop": "drizzle-kit drop --config=drizzle.config.ts",

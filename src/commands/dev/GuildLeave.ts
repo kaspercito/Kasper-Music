@@ -36,30 +36,39 @@ export default class GuildLeave extends Command {
 	public async run(client: Lavamusic, ctx: Context, args: string[]): Promise<any> {
 		const guildId = args[0];
 
-		const guild = await client.shard
-			?.broadcastEval(
-				(c, { guildId }) => {
-					const guild = c.guilds.cache.get(guildId);
-					return guild ? { id: guild.id, name: guild.name } : null;
-				},
-				{ context: { guildId } },
-			)
-			.then((results) => results.find((g) => g !== null));
+		const localGuild = client.guilds.cache.get(guildId);
+		const guild = client.shard
+			? await client.shard
+					.broadcastEval(
+						(c, { guildId }) => {
+							const guild = c.guilds.cache.get(guildId);
+							return guild ? { id: guild.id, name: guild.name } : null;
+						},
+						{ context: { guildId } },
+					)
+					.then((results) => results.find((g) => g !== null))
+			: localGuild
+				? { id: localGuild.id, name: localGuild.name }
+				: null;
 
 		if (!guild) {
 			return await ctx.sendMessage(ctx.locale(I18N.dev.guilds.not_found));
 		}
 
 		try {
-			await client.shard?.broadcastEval(
-				async (c, { guildId }) => {
-					const guild = c.guilds.cache.get(guildId);
-					if (guild) {
-						await guild.leave();
-					}
-				},
-				{ context: { guildId } },
-			);
+			if (client.shard) {
+				await client.shard.broadcastEval(
+					async (c, { guildId }) => {
+						const guild = c.guilds.cache.get(guildId);
+						if (guild) {
+							await guild.leave();
+						}
+					},
+					{ context: { guildId } },
+				);
+			} else {
+				await localGuild?.leave();
+			}
 			await ctx.sendMessage(ctx.locale(I18N.dev.guilds.leave.success, { name: guild.name }));
 		} catch {
 			await ctx.sendMessage(ctx.locale(I18N.dev.guilds.leave.fail, { name: guild.name }));

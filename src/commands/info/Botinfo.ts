@@ -47,13 +47,20 @@ export default class Botinfo extends Command {
 		const discordJsVersion = version;
 		const commands = client.commands.size;
 
-		const promises = [
-			client.shard?.broadcastEval((client) => client.guilds.cache.size),
-			client.shard?.broadcastEval((client) =>
-				client.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0),
-			),
-			client.shard?.broadcastEval((client) => client.channels.cache.size),
-		];
+		const promises: Promise<number[]>[] = client.shard
+			? [
+					client.shard.broadcastEval((client) => client.guilds.cache.size),
+					client.shard.broadcastEval((client) =>
+						client.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0),
+					),
+					client.shard.broadcastEval((client) => client.channels.cache.size),
+				]
+			: [
+					// Modo de un solo proceso (sin ShardingManager)
+					Promise.resolve([client.guilds.cache.size]),
+					Promise.resolve([client.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0)]),
+					Promise.resolve([client.channels.cache.size]),
+				];
 		return Promise.all(promises).then(async (results) => {
 			const guilds = results[0]?.reduce((acc, guildCount) => acc + guildCount, 0);
 			const users = results[1]?.reduce((acc, memberCount) => acc + memberCount, 0);

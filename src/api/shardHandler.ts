@@ -8,7 +8,8 @@ import { PanelError, type PanelReply, type PanelRequest } from "./protocol";
 
 type Handler = (client: Lavamusic, args: Record<string, any>) => Promise<unknown> | unknown;
 
-const PANEL_REQUESTER = { id: "panel", username: "Panel web", avatar: null };
+/** Quien "pide" las canciones desde el panel. Usa el id del bot para que Discord muestre una mención válida. */
+const panelRequester = (client: Lavamusic) => ({ id: client.user?.id ?? "0", username: "Panel web", avatar: null });
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -115,7 +116,12 @@ function guildSummary(client: Lavamusic, g: Guild) {
 	};
 }
 
-function pickTextChannel(client: Lavamusic, guild: Guild, preferred?: string): string | undefined {
+/**
+ * Canal donde el bot publica "Reproduciendo ahora". Orden:
+ * elegido en el panel → PANEL_TEXT_CHANNEL → canal del reproductor → canal /setup → canal 24/7 →
+ * un canal llamado música/music/bot/comandos. Nunca el canal de avisos del sistema (despedidas, etc.).
+ */
+async function pickTextChannel(client: Lavamusic, guild: Guild, preferred?: string): Promise<string | undefined> {
 	const me = guild.members.me;
 	const ok = (id?: string | null) => {
 		if (!id) return false;
@@ -124,10 +130,15 @@ function pickTextChannel(client: Lavamusic, guild: Guild, preferred?: string): s
 		return !me || c.permissionsFor(me)?.has(["ViewChannel", "SendMessages"]) === true;
 	};
 	if (ok(preferred)) return preferred;
+	if (ok(process.env.PANEL_TEXT_CHANNEL)) return process.env.PANEL_TEXT_CHANNEL;
 	const fromPlayer = (client.manager as any).getPlayer(guild.id)?.textChannelId;
 	if (ok(fromPlayer)) return fromPlayer;
-	if (ok(guild.systemChannelId)) return guild.systemChannelId as string;
-	return guild.channels.cache.find((c) => ok(c.id))?.id;
+	const setup: any = await client.db.getSetup(guild.id).catch(() => null);
+	if (ok(setup?.textId)) return setup.textId;
+	const stay: any = await client.db.get_247(guild.id).catch(() => null);
+	const stayRow = Array.isArray(stay) ? stay[0] : stay;
+	if (ok(stayRow?.textId)) return stayRow.textId;
+	return guild.channels.cache.find((c) => ok(c.id) && /m[uú]sica|music|comandos|bot/i.test(c.name))?.id;
 }
 
 async function ensurePlayer(client: Lavamusic, guild: Guild, voiceChannelId?: string, textChannelId?: string) {
@@ -145,7 +156,7 @@ async function ensurePlayer(client: Lavamusic, guild: Guild, voiceChannelId?: st
 		player = manager.createPlayer({
 			guildId: guild.id,
 			voiceChannelId: vc.id,
-			textChannelId: pickTextChannel(client, guild, textChannelId),
+			textChannelId: await pickTextChannel(client, guild, textChannelId),
 			selfMute: false,
 			selfDeaf: true,
 			vcRegion: (vc as any).rtcRegion ?? undefined,
@@ -311,7 +322,7 @@ const handlers: Record<string, Handler> = {
 		if (q.length > 300) throw new PanelError("La búsqueda es demasiado larga.");
 		const res: any = await (client.manager as any).search(
 			source === "soundcloud" ? { query: q, source: "soundcloud" } : { query: q },
-			PANEL_REQUESTER,
+			panelRequester(client),
 		);
 		if (res?.loadType === "error") throw new PanelError(res.exception?.message || "Error al buscar.", 502);
 		return {
@@ -329,7 +340,7 @@ const handlers: Record<string, Handler> = {
 		if (q.length > 500) throw new PanelError("La consulta es demasiado larga.");
 
 		const player = await ensurePlayer(client, g, voiceChannelId, textChannelId);
-		const res: any = await player.search(source === "soundcloud" ? { query: q, source: "soundcloud" } : { query: q }, PANEL_REQUESTER);
+		const res: any = await player.search(source === "soundcloud" ? { query: q, source: "soundcloud" } : { query: q }, panelRequester(client));
 		if (!res || res.loadType === "error") throw new PanelError(res?.exception?.message || "No se pudo cargar.", 502);
 		if (!res.tracks?.length) throw new PanelError("Sin resultados.", 404);
 
@@ -531,7 +542,7 @@ const handlers: Record<string, Handler> = {
 				const vc = g.channels.cache.get(String(args.voiceChannelId));
 				if (!vc || (vc.type !== ChannelType.GuildVoice && vc.type !== ChannelType.GuildStageVoice))
 					throw new PanelError("Elige el canal de voz para el modo 24/7.");
-				const textId = pickTextChannel(client, g, args.textChannelId);
+				const textId = await pickTextChannel(client, g, args.textChannelId);
 				if (!textId) throw new PanelError("No hay un canal de texto donde el bot pueda escribir.");
 				await db.set_247(g.id, textId, vc.id);
 				await ensurePlayer(client, g, vc.id, textId);
@@ -582,29 +593,32 @@ export const GLOBAL_ACTIONS = new Set(["stats", "guilds", "search", "presence", 
 
 /* ------------------------------------------------------------------ wiring */
 
+/** Ejecuta una acción del panel contra un cliente (con o sin ShardingManager). */
+export async function runPanelAction(client: Lavamusic, msg: PanelRequest): Promise<Partial<PanelReply>> {
+	const handler = handlers[msg.action];
+	if (!handler) return { ok: false, error: "Acción desconocida", status: 404 };
+	if (!client.isReady()) return { skip: true };
+	try {
+		const data: any = await handler(client, msg.args ?? {});
+		if (data && typeof data === "object" && data.skip === true) return { skip: true };
+		return { ok: true, data };
+	} catch (e) {
+		if (e instanceof PanelError) return { ok: false, error: e.message, status: e.status };
+		logger.error(`[PANEL] Error en "${msg.action}":`, e);
+		return { ok: false, error: (e as Error)?.message || "Error interno", status: 500 };
+	}
+}
+
 /** Registra el manejador IPC en el proceso de la shard. */
 export function setupPanelShard(client: Lavamusic): void {
 	installLogBuffer(`shard-${process.env.SHARDS ?? "0"}`);
+	if (!process.send) return; // un solo proceso: el panel llama a runPanelAction directamente
 
 	process.on("message", async (raw: any) => {
 		if (!raw || raw.__panel !== true) return;
 		const msg = raw as PanelRequest;
 		const shard = client.shard?.ids?.[0] ?? 0;
-		const reply = (r: Partial<PanelReply>) =>
-			process.send?.({ __panelReply: true, id: msg.id, shard, ...r } satisfies PanelReply);
-
-		const handler = handlers[msg.action];
-		if (!handler) return reply({ ok: false, error: "Acción desconocida", status: 404 });
-		if (!client.isReady()) return reply({ skip: true });
-
-		try {
-			const data: any = await handler(client, msg.args ?? {});
-			if (data && typeof data === "object" && data.skip === true) return reply({ skip: true });
-			reply({ ok: true, data });
-		} catch (e) {
-			if (e instanceof PanelError) return reply({ ok: false, error: e.message, status: e.status });
-			logger.error(`[PANEL] Error en "${msg.action}":`, e);
-			reply({ ok: false, error: (e as Error)?.message || "Error interno", status: 500 });
-		}
+		const r = await runPanelAction(client, msg);
+		process.send?.({ __panelReply: true, id: msg.id, shard, ...r } satisfies PanelReply);
 	});
 }

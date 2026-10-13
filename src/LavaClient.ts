@@ -6,7 +6,7 @@ import { setupAntiCrash } from "./utils/ProcessHandlers";
 
 const { MessageContent, GuildVoiceStates, GuildMessages, Guilds } = GatewayIntentBits;
 
-export async function launch() {
+export async function launch(): Promise<Lavamusic> {
 	const clientOptions: ClientOptions = {
 		intents: [Guilds, GuildMessages, MessageContent, GuildVoiceStates],
 		allowedMentions: { parse: ["users", "roles"], repliedUser: false },
@@ -49,6 +49,7 @@ export async function launch() {
 	setupAntiCrash(client);
 	setupPanelShard(client);
 	await client.start(env.TOKEN);
+	return client;
 }
 
 // Allow standalone execution in dev mode (when this file is the entry point)

@@ -6,6 +6,7 @@ import type { Shard, ShardingManager } from "discord.js";
 import logger from "../structures/Logger";
 import { getLogs, installLogBuffer } from "./logbuffer";
 import type { PanelReply, PanelRequest } from "./protocol";
+import { runPanelAction } from "./shardHandler";
 
 /* ------------------------------------------------------------------ config */
 
@@ -42,8 +43,12 @@ class ShardRpc {
 		{ replies: PanelReply[]; expected: number; done: (r: PanelReply[]) => void; first: boolean }
 	>();
 
-	constructor(private manager: ShardingManager) {
-		manager.on("shardCreate", (shard) => {
+	/** manager = null -> un solo proceso: se llama al cliente directamente (getClient). */
+	constructor(
+		private manager: ShardingManager | null,
+		private getClient?: () => any,
+	) {
+		manager?.on("shardCreate", (shard) => {
 			shard.on("message", (m: any) => this.onMessage(m));
 		});
 	}
@@ -58,7 +63,7 @@ class ShardRpc {
 	}
 
 	private readyShards(): Shard[] {
-		return [...this.manager.shards.values()].filter((s) => s.ready && s.process);
+		return this.manager ? [...this.manager.shards.values()].filter((s) => s.ready && s.process) : [];
 	}
 
 	/** mode: "all" = todas las shards · "guild" = la que tenga el servidor · "any" = una sola. */
@@ -68,6 +73,12 @@ class ShardRpc {
 		mode: "all" | "guild" | "any",
 		timeout = 20_000,
 	): Promise<PanelReply[]> {
+		if (!this.manager) {
+			const client = this.getClient?.();
+			if (!client?.isReady?.()) throw new HttpError(503, "El bot todavía está iniciando. Intenta en unos segundos.");
+			const r = await runPanelAction(client, { __panel: true, id: "local", action, args });
+			return [{ __panelReply: true, id: "local", shard: 0, ...r }];
+		}
 		let targets = this.readyShards();
 		if (!targets.length) throw new HttpError(503, "El bot todavía está iniciando. Intenta en unos segundos.");
 		if (mode === "any") targets = [targets[0]];
@@ -116,7 +127,7 @@ class ShardRpc {
 
 /* ------------------------------------------------------------------ servidor */
 
-export function startPanelServer(manager: ShardingManager): void {
+export function startPanelServer(manager: ShardingManager | null, getClient?: () => any): void {
 	const password = process.env.PANEL_PASSWORD?.trim() ?? "";
 	const port = Number(process.env.PORT || process.env.PANEL_PORT || 0);
 
@@ -125,7 +136,7 @@ export function startPanelServer(manager: ShardingManager): void {
 	const listenPort = port || 3000;
 
 	installLogBuffer("manager");
-	const rpc = new ShardRpc(manager);
+	const rpc = new ShardRpc(manager, getClient);
 
 	const secret = createHash("sha256")
 		.update(`${process.env.PANEL_SECRET || ""}|${password}|${process.env.TOKEN || ""}`)
@@ -363,7 +374,7 @@ export function startPanelServer(manager: ShardingManager): void {
 			adminOnly();
 			const limit = Math.min(500, Number(url.searchParams.get("limit")) || 200);
 			const shardLogs = (await rpc.all("logs", { limit }).catch(() => [])).flat();
-			const own = getLogs(limit);
+			const own = manager ? getLogs(limit) : []; // sin shards, los logs ya vienen del propio proceso
 			const lines = [...own, ...shardLogs].sort((a, b) => a.t - b.t).slice(-limit);
 			return send(req, res, 200, { lines });
 		}
@@ -387,7 +398,7 @@ export function startPanelServer(manager: ShardingManager): void {
 			logger.warn("[PANEL] Reinicio solicitado desde el panel.");
 			send(req, res, 200, { ok: true });
 			setTimeout(() => {
-				for (const s of manager.shards.values()) {
+				for (const s of manager?.shards.values() ?? []) {
 					try {
 						s.kill();
 					} catch {
