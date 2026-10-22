@@ -1,0 +1,66 @@
+# Dockerfile para Heroku (stack "container"): bot con modo local (FFmpeg + yt-dlp).
+
+# ---- Build ----
+FROM oven/bun:1 AS builder
+WORKDIR /app
+COPY package.json bun.lock ./
+# Sin --frozen-lockfile: el bun.lock del proyecto no incluye @discordjs/voice, opusscript, etc.
+RUN bun install
+COPY . .
+RUN bun run build
+
+# ---- Runtime ----
+FROM oven/bun:1
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/locales ./locales
+COPY --from=builder /app/package.prod.json ./package.json
+COPY --from=builder /app/drizzle ./drizzle
+COPY --from=builder /app/panel ./panel
+COPY --from=builder /app/drizzle.config.ts /app/drizzle.config.sqlite.ts ./
+COPY --from=builder /app/src/env.ts ./src/env.ts
+COPY --from=builder /app/src/database/schemas.ts /app/src/database/schemas.sqlite.ts ./src/database/
+
+RUN bun install --production \
+  && PGLITE_PKG="node_modules/@electric-sql/pglite/dist" \
+  && rm -f "$PGLITE_PKG/pglite.wasm" "$PGLITE_PKG/pglite.data" \
+  && ln -s /app/dist/pglite.wasm "$PGLITE_PKG/pglite.wasm" \
+  && ln -s /app/dist/pglite.data "$PGLITE_PKG/pglite.data"
+
+# yt-dlp (binario independiente, no necesita Python)
+RUN mkdir -p /app/bin \
+  && curl -fsSL https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux -o /app/bin/yt-dlp \
+  && chmod +x /app/bin/yt-dlp
+
+# Script de arranque generado dentro de la imagen (no depende de bin/heroku-start.sh en el repo).
+RUN printf '%s\n' \
+  '#!/bin/sh' \
+  'set -e' \
+  'cd /app' \
+  'if [ -n "$YTDLP_COOKIES_B64" ]; then echo "$YTDLP_COOKIES_B64" | base64 -d > /tmp/cookies.txt && export YTDLP_COOKIES=/tmp/cookies.txt && echo "[start] Cookies de yt-dlp cargadas desde YTDLP_COOKIES_B64"; fi' \
+  'timeout 40 /app/bin/yt-dlp --update-to nightly >/dev/null 2>&1 || echo "[start] No se pudo actualizar yt-dlp (se usa la version del build)"' \
+  'if echo "$DATABASE_URL" | grep -qE "^sqlite:|file:.*\.db$|file:.*\.sqlite$|\.db$|\.sqlite$"; then' \
+  '  echo "[start] SQLite detectado, sincronizando esquema..."' \
+  '  bun run db:push:sqlite' \
+  'else' \
+  '  echo "[start] PostgreSQL/PGLite detectado, sincronizando esquema..."' \
+  '  bun run db:push' \
+  'fi' \
+  'exec bun run start' \
+  > /app/bin/heroku-start.sh \
+  && chmod +x /app/bin/heroku-start.sh
+
+ENV YTDLP_PATH=/app/bin/yt-dlp \
+    PLAYER_BACKEND=local \
+    YTDLP_ARGS="--js-runtimes bun" \
+    HOME=/tmp
+
+# Heroku ejecuta el contenedor con un usuario sin privilegios: /app debe ser escribible (SQLite).
+RUN chmod -R a+rwX /app
+
+CMD ["sh", "/app/bin/heroku-start.sh"]
